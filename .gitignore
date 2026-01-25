@@ -85,4 +85,8 @@ temp/
 
 # ==== Node ====
 node_modules/
-ollama_modules/
+ollama_modules/ollama_models/id_ed25519
+scripts/test_openrouter.py
+*.pem
+*.key
+id_*
