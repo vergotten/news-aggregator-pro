@@ -1,0 +1,274 @@
+# =============================================================================
+# Путь: config/models.yaml
+# =============================================================================
+# Конфигурация моделей для AI агентов
+#
+# Переменные окружения:
+# - LLM_PROVIDER: auto, groq, google, openrouter, huggingface, ollama
+# - LLM_PROFILE: имя профиля (переопределяет active_profile)
+# - GROQ_API_KEY: API ключ для Groq (https://console.groq.com)
+# - GOOGLE_API_KEY: API ключ для Google (https://aistudio.google.com/apikey)
+# - OPENROUTER_API_KEY: API ключ для OpenRouter (https://openrouter.ai/keys)
+# - HUGGINGFACEHUB_API_TOKEN: токен HuggingFace
+#
+# Провайдеры (по приоритету fallback):
+# 1. Groq - 30 req/min, 14400 req/day (самый быстрый)
+# 2. Google Gemini - 60 req/min, 1500 req/day
+# 3. OpenRouter - 50 req/day (бесплатные модели)
+# 4. HuggingFace - ограниченный бесплатный tier
+
+# =====================================
+# АКТИВНЫЙ ПРОФИЛЬ ПО УМОЛЧАНИЮ
+# =====================================
+active_profile: auto_fallback
+
+profiles:
+  # ===========================================================================
+  # AUTO FALLBACK (рекомендуется)
+  # Автоматический выбор провайдера, при 429 переключается на следующий
+  # ===========================================================================
+  auto_fallback:
+    provider: auto
+    agents:
+      classifier:
+        model: "auto"
+        temperature: 0.3
+        max_tokens: 100
+      relevance:
+        model: "auto"
+        temperature: 0.4
+        max_tokens: 300
+      summarizer:
+        model: "auto"
+        temperature: 0.5
+        max_tokens: 300
+      rewriter:
+        model: "auto"
+        temperature: 0.6
+        max_tokens: 200
+      style_normalizer:
+        model: "auto"
+        temperature: 0.3
+        max_tokens: 8000
+      quality_validator:
+        model: "auto"
+        temperature: 0.2
+        max_tokens: 500
+
+  # ===========================================================================
+  # GROQ - Llama 3.1 70B (рекомендуется для скорости)
+  # 30 req/min бесплатно, при 429 fallback на Google → OpenRouter
+  # ===========================================================================
+  groq:
+    provider: groq
+    agents:
+      classifier:
+        model: "llama-3.1-8b-instant"
+        temperature: 0.3
+        max_tokens: 100
+      relevance:
+        model: "llama-3.1-70b-versatile"
+        temperature: 0.4
+        max_tokens: 300
+      summarizer:
+        model: "llama-3.1-70b-versatile"
+        temperature: 0.5
+        max_tokens: 300
+      rewriter:
+        model: "llama-3.1-70b-versatile"
+        temperature: 0.6
+        max_tokens: 200
+      style_normalizer:
+        model: "llama-3.1-70b-versatile"
+        temperature: 0.3
+        max_tokens: 8000
+      quality_validator:
+        model: "llama-3.1-8b-instant"
+        temperature: 0.2
+        max_tokens: 500
+
+  # ===========================================================================
+  # GOOGLE GEMINI - 60 req/min, 1500 req/day бесплатно
+  # ===========================================================================
+  google:
+    provider: google
+    agents:
+      classifier:
+        model: "gemini-1.5-flash"
+        temperature: 0.3
+        max_tokens: 100
+      relevance:
+        model: "gemini-1.5-flash"
+        temperature: 0.4
+        max_tokens: 300
+      summarizer:
+        model: "gemini-1.5-flash"
+        temperature: 0.5
+        max_tokens: 300
+      rewriter:
+        model: "gemini-1.5-flash"
+        temperature: 0.6
+        max_tokens: 200
+      style_normalizer:
+        model: "gemini-1.5-flash"
+        temperature: 0.3
+        max_tokens: 8000
+      quality_validator:
+        model: "gemini-1.5-flash"
+        temperature: 0.2
+        max_tokens: 500
+
+  # ===========================================================================
+  # OPENROUTER FREE - бесплатные модели (50 req/day)
+  # ===========================================================================
+  free_openrouter:
+    provider: openrouter
+    agents:
+      classifier:
+        model: "meta-llama/llama-3.3-70b-instruct:free"
+        temperature: 0.3
+        max_tokens: 100
+      relevance:
+        model: "meta-llama/llama-3.3-70b-instruct:free"
+        temperature: 0.4
+        max_tokens: 300
+      summarizer:
+        model: "meta-llama/llama-3.3-70b-instruct:free"
+        temperature: 0.5
+        max_tokens: 300
+      rewriter:
+        model: "google/gemma-3-27b-it:free"
+        temperature: 0.6
+        max_tokens: 200
+      style_normalizer:
+        model: "meta-llama/llama-3.3-70b-instruct:free"
+        temperature: 0.3
+        max_tokens: 8000
+      quality_validator:
+        model: "meta-llama/llama-3.2-3b-instruct:free"
+        temperature: 0.2
+        max_tokens: 500
+
+  # ===========================================================================
+  # OpenRouter - платные дешёвые (GPT-4o-mini)
+  # ===========================================================================
+  cloud_balanced:
+    provider: openrouter
+    agents:
+      classifier:
+        model: "openai/gpt-4o-mini"
+        temperature: 0.3
+        max_tokens: 100
+      relevance:
+        model: "openai/gpt-4o-mini"
+        temperature: 0.4
+        max_tokens: 300
+      summarizer:
+        model: "openai/gpt-4o-mini"
+        temperature: 0.5
+        max_tokens: 300
+      rewriter:
+        model: "openai/gpt-4o-mini"
+        temperature: 0.6
+        max_tokens: 200
+      style_normalizer:
+        model: "openai/gpt-4o-mini"
+        temperature: 0.3
+        max_tokens: 4000
+      quality_validator:
+        model: "openai/gpt-4o-mini"
+        temperature: 0.2
+        max_tokens: 500
+
+  # ===========================================================================
+  # OpenRouter - качественные (GPT-4o, Claude 3.5)
+  # ===========================================================================
+  cloud_quality:
+    provider: openrouter
+    agents:
+      classifier:
+        model: "openai/gpt-4o"
+        temperature: 0.2
+        max_tokens: 100
+      relevance:
+        model: "openai/gpt-4o"
+        temperature: 0.3
+        max_tokens: 500
+      summarizer:
+        model: "anthropic/claude-3.5-sonnet"
+        temperature: 0.4
+        max_tokens: 500
+      rewriter:
+        model: "anthropic/claude-3.5-sonnet"
+        temperature: 0.5
+        max_tokens: 300
+      style_normalizer:
+        model: "anthropic/claude-3.5-sonnet"
+        temperature: 0.2
+        max_tokens: 8000
+      quality_validator:
+        model: "openai/gpt-4o"
+        temperature: 0.1
+        max_tokens: 500
+
+  # ===========================================================================
+  # Локальный Ollama - сбалансированный
+  # ===========================================================================
+  balanced:
+    provider: ollama
+    agents:
+      classifier:
+        model: "qwen2.5:14b-instruct-q5_k_m"
+        temperature: 0.3
+        max_tokens: 100
+      relevance:
+        model: "qwen2.5:14b-instruct-q5_k_m"
+        temperature: 0.4
+        max_tokens: 300
+      summarizer:
+        model: "qwen2.5:14b-instruct-q5_k_m"
+        temperature: 0.5
+        max_tokens: 300
+      rewriter:
+        model: "qwen2.5:14b-instruct-q5_k_m"
+        temperature: 0.6
+        max_tokens: 200
+      style_normalizer:
+        model: "qwen2.5:14b-instruct-q5_k_m"
+        temperature: 0.3
+        max_tokens: 8000
+      quality_validator:
+        model: "qwen2.5:14b-instruct-q5_k_m"
+        temperature: 0.2
+        max_tokens: 500
+
+  # ===========================================================================
+  # Локальный Ollama - быстрый
+  # ===========================================================================
+  fast:
+    provider: ollama
+    agents:
+      classifier:
+        model: "mistral:latest"
+        temperature: 0.3
+        max_tokens: 100
+      relevance:
+        model: "mistral:latest"
+        temperature: 0.4
+        max_tokens: 300
+      summarizer:
+        model: "mistral:latest"
+        temperature: 0.5
+        max_tokens: 300
+      rewriter:
+        model: "mistral:latest"
+        temperature: 0.6
+        max_tokens: 200
+      style_normalizer:
+        model: "qwen2.5:7b"
+        temperature: 0.3
+        max_tokens: 4000
+      quality_validator:
+        model: "mistral:latest"
+        temperature: 0.2
+        max_tokens: 500

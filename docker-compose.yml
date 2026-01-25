@@ -1,0 +1,207 @@
+x-common-image-policy: &image-policy
+  pull_policy: missing
+
+services:
+  # ============================================================================
+  # PostgreSQL Database
+  # ============================================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: news-aggregator-db
+    restart: unless-stopped
+    <<: *image-policy
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-newsaggregator}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme123}
+      POSTGRES_DB: ${POSTGRES_DB:-news_aggregator}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-newsaggregator} -d ${POSTGRES_DB:-news_aggregator}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    networks:
+      - news-aggregator-network
+
+  # ============================================================================
+  # Redis Cache/Queue Storage
+  # ============================================================================
+  redis:
+    image: redis:latest
+    container_name: news-aggregator-redis
+    restart: unless-stopped
+    <<: *image-policy
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - news-aggregator-network
+
+  # ============================================================================
+  # Qdrant Vector Database
+  # ============================================================================
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: news-aggregator-qdrant
+    restart: unless-stopped
+    <<: *image-policy
+    environment:
+      QDRANT__TELEMETRY_DISABLED: "true"
+      QDRANT__LOG_LEVEL: INFO
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - news-aggregator-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:6333/readiness || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ============================================================================
+  # Ollama LLM Server
+  # ============================================================================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: news-aggregator-ollama
+    restart: unless-stopped
+    <<: *image-policy
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+
+    environment:
+      OLLAMA_HOST: "0.0.0.0:11434"
+      OLLAMA_NUM_GPU: -1          # Авто-режим
+      OLLAMA_GPU_MEMORY: 10GB     # 10GB из 11GB (1GB запас)
+      OLLAMA_GPU_LAYERS: auto     # Гибрид GPU+RAM
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      # Модели сохраняются физически в ./ollama_models
+      - ./ollama_models:/root/.ollama
+    networks:
+      - news-aggregator-network
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ============================================================================
+  # Directus CMS (Database Admin Interface)
+  # ============================================================================
+  directus:
+    image: directus/directus:latest
+    container_name: news-aggregator-directus
+    restart: unless-stopped
+    <<: *image-policy
+    environment:
+      # Database
+      DB_CLIENT: postgres
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${POSTGRES_DB:-news_aggregator}
+      DB_USER: ${POSTGRES_USER:-newsaggregator}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-changeme123}
+      
+      # Directus Config
+      KEY: ${DIRECTUS_KEY:-replace-with-random-value-in-production}
+      SECRET: ${DIRECTUS_SECRET:-replace-with-another-random-value}
+      
+      # Admin User
+      ADMIN_EMAIL: ${DIRECTUS_ADMIN_EMAIL:-admin@example.com}
+      ADMIN_PASSWORD: ${DIRECTUS_ADMIN_PASSWORD:-admin}
+      
+      # Settings
+      PUBLIC_URL: http://localhost:8055
+      WEBSOCKETS_ENABLED: true
+      
+    ports:
+      - "${DIRECTUS_PORT:-8055}:8055"
+    volumes:
+      - directus_uploads:/directus/uploads
+      - directus_extensions:/directus/extensions
+    networks:
+      - news-aggregator-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ============================================================================
+  # FastAPI Backend (Processing Service)
+  # ============================================================================
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: news-aggregator-api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-newsaggregator}:${POSTGRES_PASSWORD:-changeme123}@postgres:5432/${POSTGRES_DB:-news_aggregator}
+      REDIS_URL: redis://redis:6379/0
+      QDRANT_URL: http://qdrant:6333
+      OLLAMA_BASE_URL: http://ollama:11434
+      PYTHONUNBUFFERED: 1
+      PYTHONPATH: /app
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/app/src
+      - ./logs:/app/logs
+    networks:
+      - news-aggregator-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+
+# ==============================================================================
+# Networks
+# ==============================================================================
+networks:
+  news-aggregator-network:
+    driver: bridge
+
+# ==============================================================================
+# Volumes
+# ==============================================================================
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  qdrant_data:
+    driver: local
+  directus_uploads:
+    driver: local
+  directus_extensions:
+    driver: local
+  # ollama_data больше не используется - модели в ./ollama_models

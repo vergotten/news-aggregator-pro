@@ -1,0 +1,10 @@
+# AI Dependencies (установить отдельно после основных)
+# pip install -r requirements-ai.txt
+
+langchain-core==0.1.23
+langchain-community==0.0.20
+langchain==0.1.6
+
+# Уже установлено из requirements.txt:
+# ollama==0.1.6
+# qdrant-client==1.7.0
