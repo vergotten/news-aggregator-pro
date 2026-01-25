@@ -90,3 +90,11 @@ scripts/test_openrouter.py
 *.pem
 *.key
 id_*
+
+# Sensitive files
+ollama_models/id_*
+scripts/test_openrouter.py
+*.pem
+*.key
+id_ed25519
+id_rsa
