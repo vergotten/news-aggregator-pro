@@ -1,0 +1,56 @@
+# =============================================================================
+# .dockerignore — исключаем тяжёлые и ненужные файлы из контекста сборки
+# =============================================================================
+
+# Модели Ollama (~29GB) — монтируются как volume, не нужны внутри API/Streamlit
+ollama_models/
+
+# Git
+.git/
+.gitignore
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs и кэш
+logs/
+cache/
+*.log
+
+# Docker (не копируем docker-конфиги внутрь контейнера)
+docker-compose*.yml
+Dockerfile
+docker/
+docker_*.sh
+
+# Docs и примеры
+docs/
+examples/
+n8n_workflows/
+*.md
+
+# Tests (если не нужны в production-образе)
+tests/
+pytest.ini
+test_*.py
+
+# Env files
+.env
+.env.*

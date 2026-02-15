@@ -127,19 +127,19 @@ services:
       DB_DATABASE: ${POSTGRES_DB:-news_aggregator}
       DB_USER: ${POSTGRES_USER:-newsaggregator}
       DB_PASSWORD: ${POSTGRES_PASSWORD:-changeme123}
-      
+
       # Directus Config
       KEY: ${DIRECTUS_KEY:-replace-with-random-value-in-production}
       SECRET: ${DIRECTUS_SECRET:-replace-with-another-random-value}
-      
+
       # Admin User
       ADMIN_EMAIL: ${DIRECTUS_ADMIN_EMAIL:-admin@example.com}
       ADMIN_PASSWORD: ${DIRECTUS_ADMIN_PASSWORD:-admin}
-      
+
       # Settings
       PUBLIC_URL: http://localhost:8055
       WEBSOCKETS_ENABLED: true
-      
+
     ports:
       - "${DIRECTUS_PORT:-8055}:8055"
     volumes:
@@ -168,11 +168,15 @@ services:
       PYTHONUNBUFFERED: 1
       PYTHONPATH: /app
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      HUGGINGFACEHUB_API_TOKEN: ${HUGGINGFACEHUB_API_TOKEN}
     ports:
       - "8000:8000"
     volumes:
       - ./src:/app/src
       - ./logs:/app/logs
+      - ./tests:/app/tests
     networks:
       - news-aggregator-network
     depends_on:
@@ -182,6 +186,65 @@ services:
         condition: service_healthy
       qdrant:
         condition: service_started
+
+  # ============================================================================
+  # n8n Workflow Automation
+  # ============================================================================
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: news-aggregator-n8n
+    restart: unless-stopped
+    <<: *image-policy
+    environment:
+      # Database
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-news_aggregator}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER:-newsaggregator}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:-changeme123}
+
+      # n8n Configuration
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_USER:-admin}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_PASSWORD:-changeme123}
+      N8N_HOST: ${N8N_HOST:-localhost}
+      N8N_PORT: ${N8N_PORT:-5678}
+      N8N_PROTOCOL: ${N8N_PROTOCOL:-http}
+      WEBHOOK_URL: ${N8N_WEBHOOK_URL:-http://localhost:5678/}
+
+      # Security
+      N8N_JWT_SECRET: ${N8N_JWT_SECRET:-your-jwt-secret}
+
+      # Integration settings
+      N8N_METRICS: true
+      N8N_DIAGNOSTICS_ENABLED: false
+      N8N_USER_FOLDER: /home/node/.n8n
+
+      # Logging
+      N8N_LOG_LEVEL: info
+      N8N_LOG_OUTPUT: console
+
+      # Add these for better FastAPI integration
+      N8N_BINARY_DATA_MODE: filesystem
+      N8N_FILE_STORAGE_PATH: /home/node/.n8n/files
+
+    ports:
+      - "${N8N_PORT:-5678}:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n_workflows:/home/node/.n8n/workflows
+    networks:
+      - news-aggregator-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -f http://localhost:5678/healthz || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
 # ==============================================================================
 # Networks
@@ -204,4 +267,5 @@ volumes:
     driver: local
   directus_extensions:
     driver: local
-  # ollama_data больше не используется - модели в ./ollama_models
+  n8n_data:
+    driver: local

@@ -98,3 +98,5 @@ scripts/test_openrouter.py
 *.key
 id_ed25519
 id_rsa
+scripts
+git_push.sh
