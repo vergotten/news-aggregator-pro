@@ -1,566 +1,512 @@
 # -*- coding: utf-8 -*-
-# =============================================================================
-# Путь: src/application/ai_services/orchestrator.py
-# =============================================================================
 """
-Enhanced AI Orchestrator with LangChain and Multi-Provider Support.
+Оркестратор AI-обработки статей v5.1
 
-Coordinates all AI agents with:
-- Configurable LLM providers (Ollama, OpenRouter)
-- Quality validation and retries
-- Performance metrics
-- Graceful error handling
+Изменения v5.1:
+- Интеграция с SkiplistService
+- Пропуск проблемных URL
+- Добавление в skiplist при ошибках
+- Передача URL в normalizer для отслеживания
 """
 
 import logging
 import time
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, field
 
-from src.infrastructure.ai.llm_provider import (
-    LLMProvider, LLMProviderFactory, LLMConfig, LLMProviderType
-)
-from src.application.ai_services.agents.classifier_agent import ClassifierAgent
-from src.application.ai_services.agents.relevance_agent import RelevanceAgent
-from src.application.ai_services.agents.summarizer_agent import SummarizerAgent
-from src.application.ai_services.agents.rewriter_agent import RewriterAgent
-from src.application.ai_services.agents.style_normalizer_agent import StyleNormalizerAgent
-from src.application.ai_services.agents.quality_validator_agent import QualityValidatorAgent
-from src.config.models_config import ModelsConfig, get_models_config
 from src.domain.entities.article import Article
+from src.infrastructure.ai.llm_provider import LLMProviderFactory
+from src.infrastructure.ai.qdrant_client import QdrantService
+
+# Skiplist
+from src.infrastructure.skiplist import (
+    get_skiplist_service,
+    SkipReason,
+)
+
+# Агенты
+from src.application.ai_services.agents import (
+    ClassifierAgent,
+    RelevanceAgent,
+    SummarizerAgent,
+    RewriterAgent,
+    StyleNormalizerAgent,
+    QualityValidatorAgent,
+)
+from src.application.ai_services.agents.telegram_formatter_agent import TelegramFormatterAgent
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class ProcessingMetrics:
-    """Metrics for a single article processing."""
-    article_id: str = ""
-    start_time: float = 0.0
-    processing_time: float = 0.0
-    steps_completed: list[str] = field(default_factory=list)
-    steps_failed: list[str] = field(default_factory=list)
-    relevance_score: Optional[int] = None
-    validation_score: Optional[float] = None
-    length_ratio: Optional[float] = None
+class ModelAttempt:
+    """Информация о попытке использования модели."""
+    model_id: str
+    success: bool
+    error: Optional[str] = None
+    attempt_time: float = 0.0
+    response_time: float = 0.0
+
+    def __str__(self) -> str:
+        status = "OK" if self.success else "FAIL"
+        return f"[{status}] {self.model_id} ({self.response_time:.2f}s)"
+
+
+@dataclass
+class ProcessingStats:
+    """Статистика обработки одной статьи."""
+    article_id: str
+    title: str
+    steps: List[Dict[str, Any]] = field(default_factory=list)
+    model_attempts: List[ModelAttempt] = field(default_factory=list)
+    total_time: float = 0.0
     success: bool = False
+    error: Optional[str] = None
+    final_model: Optional[str] = None
+    skipped: bool = False
+    skip_reason: Optional[str] = None
 
 
 class AIOrchestrator:
     """
-    Orchestrator for AI article processing pipeline.
+    Оркестратор AI-обработки статей v5.1
 
-    Supports multiple LLM providers:
-    - Ollama (local inference)
-    - OpenRouter (cloud, OpenAI-compatible)
-
-    Pipeline stages:
-    1. Classification (news/article)
-    2. Relevance scoring
-    3. Summary/teaser generation
-    4. Title improvement
-    5. Style normalization
-    6. Quality validation
-
-    Example:
-        >>> # Local Ollama
-        >>> orchestrator = AIOrchestrator(provider="ollama")
-
-        >>> # Cloud OpenRouter
-        >>> orchestrator = AIOrchestrator(
-        ...     provider="openrouter",
-        ...     api_key="sk-or-..."
-        ... )
-
-        >>> # Process article
-        >>> processed = orchestrator.process_article(article)
+    Интегрирован с SkiplistService для пропуска проблемных URL.
     """
+
+    EXCLUDED_MODELS = [
+        "nvidia/nemotron",
+        "nvidia/nemotron-3-nano-30b-a3b:free",
+        "meta-llama/llama-3.2-3b",
+        "meta-llama/llama-3.1-8b",
+        "google/gemma-2-9b",
+        "openai/gpt-oss-120b:free",
+    ]
 
     def __init__(
             self,
             provider: Optional[str] = None,
-            api_key: Optional[str] = None,
-            config_path: str = "config/models.yaml",
-            enable_validation: bool = True,
-            max_retries: int = 2
+            strategy: Optional[str] = None,
+            enable_fallback: bool = True,
+            **kwargs
     ):
-        """
-        Initialize orchestrator.
+        try:
+            self.provider = provider
+            self.strategy = strategy
+            self.enable_fallback = enable_fallback
 
-        Args:
-            provider: LLM provider ("ollama" or "openrouter").
-                     If None, uses config file setting.
-            api_key: API key for cloud providers (or use env var)
-            config_path: Path to models config YAML
-            enable_validation: Enable quality validation
-            max_retries: Max retries on validation failure
-        """
-        # Load configuration
-        self.config = ModelsConfig(config_path)
+            # LLM провайдер
+            if provider:
+                self.llm_provider = LLMProviderFactory.create_auto(provider=provider)
+            else:
+                self.llm_provider = LLMProviderFactory.create_auto()
 
-        # Override provider if specified
-        if provider:
-            import os
-            os.environ["LLM_PROVIDER"] = provider
-            # Reload config with new provider
-            self.config = ModelsConfig(config_path)
+            # Skiplist
+            self.skiplist = get_skiplist_service()
 
-        if api_key:
-            import os
-            os.environ["OPENROUTER_API_KEY"] = api_key
+            # Агенты (ленивая инициализация)
+            self._classifier: Optional[ClassifierAgent] = None
+            self._relevance: Optional[RelevanceAgent] = None
+            self._summarizer: Optional[SummarizerAgent] = None
+            self._rewriter: Optional[RewriterAgent] = None
+            self._normalizer: Optional[StyleNormalizerAgent] = None
+            self._validator: Optional[QualityValidatorAgent] = None
+            self._telegram_formatter: Optional[TelegramFormatterAgent] = None
 
-        self.enable_validation = enable_validation
-        self.max_retries = max_retries
+            # Qdrant
+            self.qdrant = QdrantService()
 
-        # Log configuration
-        profile = self.config.get_profile()
-        logger.info(
-            f"AIOrchestrator initializing: "
-            f"profile={profile.name}, provider={profile.provider.value}"
-        )
+            logger.info(
+                f"[Orchestrator] Initialized: provider={provider}, "
+                f"fallback={enable_fallback}, skiplist={len(self.skiplist.list_urls())} URLs"
+            )
 
-        # Initialize agents (they will use config automatically)
-        self._init_agents()
+            self._log_available_models()
 
-        logger.info("AIOrchestrator initialized successfully")
+        except Exception as e:
+            logger.error(f"[Orchestrator] Init error: {e}")
+            raise
 
-    def _init_agents(self):
-        """Initialize all AI agents."""
-        self.classifier = ClassifierAgent(config=self.config)
-        self.relevance = RelevanceAgent(config=self.config)
-        self.summarizer = SummarizerAgent(config=self.config)
-        self.rewriter = RewriterAgent(config=self.config)
-        self.style_normalizer = StyleNormalizerAgent(config=self.config)
+    # =========================================================================
+    # Ленивая инициализация агентов
+    # =========================================================================
 
-        if self.enable_validation:
-            self.validator = QualityValidatorAgent(config=self.config)
-            logger.info("QualityValidator enabled")
-        else:
-            self.validator = None
-            logger.info("QualityValidator disabled")
+    @property
+    def classifier(self) -> ClassifierAgent:
+        if self._classifier is None:
+            self._classifier = ClassifierAgent()
+        return self._classifier
+
+    @property
+    def relevance(self) -> RelevanceAgent:
+        if self._relevance is None:
+            self._relevance = RelevanceAgent()
+        return self._relevance
+
+    @property
+    def summarizer(self) -> SummarizerAgent:
+        if self._summarizer is None:
+            self._summarizer = SummarizerAgent()
+        return self._summarizer
+
+    @property
+    def rewriter(self) -> RewriterAgent:
+        if self._rewriter is None:
+            self._rewriter = RewriterAgent()
+        return self._rewriter
+
+    @property
+    def normalizer(self) -> StyleNormalizerAgent:
+        if self._normalizer is None:
+            self._normalizer = StyleNormalizerAgent()
+        return self._normalizer
+
+    @property
+    def validator(self) -> QualityValidatorAgent:
+        if self._validator is None:
+            self._validator = QualityValidatorAgent()
+        return self._validator
+
+    @property
+    def telegram_formatter(self) -> TelegramFormatterAgent:
+        if self._telegram_formatter is None:
+            self._telegram_formatter = TelegramFormatterAgent()
+        return self._telegram_formatter
+
+    # =========================================================================
+    # Основной метод обработки
+    # =========================================================================
 
     def process_article(
             self,
             article: Article,
-            normalize_style: bool = True,
-            validate_quality: bool = True,
             verbose: bool = False,
             min_relevance: int = 5
     ) -> Optional[Article]:
         """
-        Full AI processing of an article.
+        Полная обработка статьи.
 
         Args:
-            article: Article to process
-            normalize_style: Apply style normalization
-            validate_quality: Validate normalization quality
-            verbose: Print progress to console
-            min_relevance: Minimum relevance score (lower scores are flagged)
+            article: Статья для обработки
+            verbose: Подробный вывод
+            min_relevance: Минимальная релевантность
 
         Returns:
-            Processed article or None if processing failed
+            Обработанная статья или None
         """
         start_time = time.time()
-        article_id = str(getattr(article, 'id', 'unknown'))
-
-        logger.info(f"Processing article {article_id}: {article.title[:50]}...")
-
-        if verbose:
-            print(f"\n🤖 Processing: {article.title[:50]}...")
-
-        metrics = ProcessingMetrics(
-            article_id=article_id,
-            start_time=start_time
+        stats = ProcessingStats(
+            article_id=str(article.id),
+            title=article.title[:50] if article.title else "Untitled"
         )
 
         try:
-            # 1. Classification
-            self._step_classify(article, metrics, verbose)
+            # =========================================================
+            # ПРОВЕРКА SKIPLIST
+            # =========================================================
+            if self.skiplist.should_skip(article.url):
+                reason = self.skiplist.get_reason(article.url)
+                logger.info(f"[Orchestrator] SKIPPED (skiplist): {article.url[:50]}... ({reason.value if reason else 'unknown'})")
+                stats.skipped = True
+                stats.skip_reason = reason.value if reason else "in skiplist"
+                return None
 
-            # 2. Relevance scoring
-            score = self._step_relevance(article, metrics, verbose, min_relevance)
+            logger.info(f"[Orchestrator] Processing: {article.title[:50]}...")
 
-            # 3. Summary/teaser
-            self._step_summarize(article, metrics, verbose)
+            # =========================================================
+            # ШАГ 1: Классификация
+            # =========================================================
+            logger.info("[Orchestrator] Step 1: Classification...")
+            step_start = time.time()
 
-            # 4. Title improvement
-            self._step_rewrite_title(article, metrics, verbose)
-
-            # 5. Style normalization with validation
-            if normalize_style and article.content:
-                self._step_normalize(article, metrics, verbose, validate_quality)
-
-            # 6. Update status
-            article.embedding_status = "processed"
-
-            # Final metrics
-            metrics.processing_time = time.time() - start_time
-            metrics.success = len(metrics.steps_failed) == 0
-
-            logger.info(
-                f"Article {article_id} processed in {metrics.processing_time:.2f}s - "
-                f"Success: {metrics.success}, Failed: {metrics.steps_failed}"
+            classification = self.classifier.classify_with_details(
+                title=article.title,
+                content=(article.content or "")[:1000]
             )
 
-            if verbose:
-                print(f"   ✅ Done! Score: {score}/10, Time: {metrics.processing_time:.1f}s")
+            article.is_news = classification.is_news
+            step_time = time.time() - step_start
+
+            stats.model_attempts.append(ModelAttempt(
+                model_id=self.classifier.model,
+                success=True,
+                response_time=step_time
+            ))
+
+            logger.info(f"[Orchestrator] Classification: {'NEWS' if article.is_news else 'ARTICLE'} ({classification.confidence:.0%})")
+
+            # =========================================================
+            # ШАГ 2: Релевантность
+            # =========================================================
+            logger.info("[Orchestrator] Step 2: Relevance...")
+            step_start = time.time()
+
+            relevance_result = self.relevance.score_with_details(
+                title=article.title,
+                content=(article.content or "")[:1500],
+                tags=article.tags
+            )
+
+            article.relevance_score = float(relevance_result.score)
+            article.relevance_reason = relevance_result.reason
+            step_time = time.time() - step_start
+
+            stats.model_attempts.append(ModelAttempt(
+                model_id=self.relevance.model,
+                success=True,
+                response_time=step_time
+            ))
+
+            logger.info(f"[Orchestrator] Relevance: {article.relevance_score}/10")
+
+            # Проверка минимальной релевантности
+            if article.relevance_score < min_relevance:
+                logger.info(f"[Orchestrator] Low relevance ({article.relevance_score} < {min_relevance}), skipping further processing")
+                stats.success = True
+                stats.total_time = time.time() - start_time
+                return article
+
+            # =========================================================
+            # ШАГ 3: Тизер
+            # =========================================================
+            logger.info("[Orchestrator] Step 3: Teaser...")
+            step_start = time.time()
+
+            summary_result = self.summarizer.summarize_with_details(
+                title=article.title,
+                content=(article.content or "")[:3000]
+            )
+
+            article.editorial_teaser = summary_result.teaser
+            step_time = time.time() - step_start
+
+            stats.model_attempts.append(ModelAttempt(
+                model_id=self.summarizer.model,
+                success=True,
+                response_time=step_time
+            ))
+
+            logger.info(f"[Orchestrator] Teaser: {len(article.editorial_teaser)} chars")
+
+            # =========================================================
+            # ШАГ 4: Заголовок
+            # =========================================================
+            logger.info("[Orchestrator] Step 4: Title rewrite...")
+            step_start = time.time()
+
+            title_result = self.rewriter.rewrite_with_details(
+                title=article.title,
+                content=(article.content or "")[:500]
+            )
+
+            article.editorial_title = title_result.improved_title
+            step_time = time.time() - step_start
+
+            stats.model_attempts.append(ModelAttempt(
+                model_id=self.rewriter.model,
+                success=True,
+                response_time=step_time
+            ))
+
+            logger.info(f"[Orchestrator] Title: {article.editorial_title[:50]}...")
+
+            # =========================================================
+            # ШАГ 5: Нормализация стиля
+            # =========================================================
+            logger.info("[Orchestrator] Step 5: Style normalization...")
+            step_start = time.time()
+
+            content_length = len(article.content or "")
+
+            # Передаём URL для отслеживания в skiplist
+            normalization_result = self.normalizer.normalize_with_details(
+                content=article.content or "",
+                url=article.url
+            )
+
+            step_time = time.time() - step_start
+
+            stats.model_attempts.append(ModelAttempt(
+                model_id=self.normalizer.model,
+                success=True,
+                response_time=step_time
+            ))
+
+            # Валидация результата
+            validation = self.validator.validate(
+                original=article.content or "",
+                normalized=normalization_result.normalized_text
+            )
+
+            if validation.is_valid:
+                article.editorial_rewritten = normalization_result.normalized_text
+                logger.info(
+                    f"[Orchestrator] Normalized: {content_length} -> {len(normalization_result.normalized_text)} "
+                    f"(ratio: {normalization_result.length_ratio:.2f}, chunks: {normalization_result.chunks_processed})"
+                )
+            else:
+                logger.warning(f"[Orchestrator] Normalization failed validation: {validation.issues}")
+                article.editorial_rewritten = None
+
+                # Если много ошибок — добавляем в skiplist
+                if normalization_result.used_fallback and content_length > 50000:
+                    self.skiplist.add(
+                        article.url,
+                        SkipReason.CONTEXT_TOO_LONG,
+                        content_length=content_length,
+                        error_message="Normalization failed"
+                    )
+
+            # =========================================================
+            # ШАГ 6: Теги
+            # =========================================================
+            logger.info("[Orchestrator] Step 6: Tags...")
+            if not article.tags:
+                article.tags = relevance_result.categories or []
+            logger.info(f"[Orchestrator] Tags: {article.tags[:5]}")
+
+            # =========================================================
+            # ШАГ 7: Telegram форматирование
+            # =========================================================
+            logger.info("[Orchestrator] Step 7: Telegram formatting...")
+            step_start = time.time()
+
+            try:
+                telegram_post = self.telegram_formatter.format_for_telegram(
+                    title=article.editorial_title or article.title,
+                    content=article.editorial_rewritten or article.content or "",
+                    source_url=article.url,
+                    tags=article.tags or [],
+                    images=getattr(article, 'images', [])
+                )
+
+                article.telegram_post_text = telegram_post.text
+                article.telegram_cover_image = telegram_post.cover_image
+                if telegram_post.telegraph_needed:
+                    article.telegraph_content_html = telegram_post.telegraph_content
+
+                step_time = time.time() - step_start
+                stats.model_attempts.append(ModelAttempt(
+                    model_id=self.telegram_formatter.model,
+                    success=True,
+                    response_time=step_time
+                ))
+
+                logger.info(f"[Orchestrator] Telegram: {len(telegram_post.text)} chars")
+
+            except Exception as e:
+                logger.warning(f"[Orchestrator] Telegram formatting failed: {e}")
+
+            # =========================================================
+            # Завершение
+            # =========================================================
+            stats.success = True
+            stats.total_time = time.time() - start_time
+            stats.final_model = self.llm_provider.model
+
+            self._log_final_stats(article, stats)
 
             return article
 
         except Exception as e:
-            logger.error(f"Article processing failed: {e}", exc_info=True)
-            if verbose:
-                print(f"   ❌ Processing error: {e}")
+            stats.error = str(e)
+            stats.total_time = time.time() - start_time
+            logger.error(f"[Orchestrator] Error processing {article.id}: {e}")
+
+            # Добавляем в skiplist при серьёзных ошибках
+            error_msg = str(e).lower()
+            if 'context' in error_msg or 'maximum' in error_msg:
+                self.skiplist.add(
+                    article.url,
+                    SkipReason.CONTEXT_TOO_LONG,
+                    content_length=len(article.content or ""),
+                    error_message=str(e)[:200]
+                )
+            elif 'rate' in error_msg or '429' in error_msg:
+                # Временная блокировка при rate limit
+                self.skiplist.add_temporary(
+                    article.url,
+                    SkipReason.RATE_LIMITED,
+                    minutes=5,
+                    error_message=str(e)[:200]
+                )
+
             return None
 
-    def _step_classify(
-            self,
-            article: Article,
-            metrics: ProcessingMetrics,
-            verbose: bool
-    ):
-        """Classification step."""
-        if verbose:
-            print("   1️⃣ Classification...")
+    # =========================================================================
+    # Вспомогательные методы
+    # =========================================================================
 
+    def _log_available_models(self) -> None:
+        """Логирование моделей."""
         try:
-            result = self.classifier.classify_with_details(
-                article.title, article.content or ""
-            )
-            article.is_news = result.is_news
-            metrics.steps_completed.append('classification')
-
-            logger.info(
-                f"Classification: {'NEWS' if result.is_news else 'ARTICLE'} "
-                f"(confidence: {result.confidence:.2f})"
-            )
+            if hasattr(self.llm_provider, '_discovery'):
+                models = self.llm_provider._discovery.get_free_models()
+                logger.info(f"[Orchestrator] Available models: {len(models)}")
+                for i, model in enumerate(models[:5], 1):
+                    logger.info(f"  {i}. {model.id} (ctx: {model.context_length})")
+                if len(models) > 5:
+                    logger.info(f"  ... and {len(models) - 5} more")
         except Exception as e:
-            logger.error(f"Classification failed: {e}", exc_info=True)
-            metrics.steps_failed.append('classification')
-            article.is_news = False  # Default: article
+            logger.warning(f"[Orchestrator] Could not get models: {e}")
 
-    def _step_relevance(
-            self,
-            article: Article,
-            metrics: ProcessingMetrics,
-            verbose: bool,
-            min_relevance: int
-    ) -> int:
-        """Relevance scoring step."""
-        if verbose:
-            print("   2️⃣ Relevance scoring...")
+    def _log_final_stats(self, article: Article, stats: ProcessingStats) -> None:
+        """Финальная статистика."""
+        logger.info(f"[Orchestrator] DONE: {article.id}")
+        logger.info(f"  Title: {article.title[:50]}...")
+        logger.info(f"  Type: {'NEWS' if article.is_news else 'ARTICLE'}")
+        logger.info(f"  Relevance: {article.relevance_score}/10")
+        logger.info(f"  Rewritten: {'Yes' if article.editorial_rewritten else 'No'}")
+        logger.info(f"  Time: {stats.total_time:.2f}s")
+        logger.info(f"  Models used:")
+        for attempt in stats.model_attempts:
+            logger.info(f"    {attempt}")
 
-        try:
-            result = self.relevance.score_with_details(
-                article.title,
-                article.content or "",
-                article.tags
-            )
-            article.set_relevance(result.score, result.reason)
-            metrics.steps_completed.append('relevance')
-            metrics.relevance_score = result.score
+    def get_skiplist_stats(self) -> dict:
+        """Статистика skiplist."""
+        return self.skiplist.get_stats()
 
-            logger.info(f"Relevance: {result.score}/10 - {result.reason[:50]}...")
-
-            if result.score < min_relevance:
-                logger.info(
-                    f"Low relevance: {result.score} < {min_relevance}"
-                )
-                if verbose:
-                    print(f"   ⚠️ Low relevance ({result.score}/10)")
-
-            return result.score
-
-        except Exception as e:
-            logger.error(f"Relevance scoring failed: {e}", exc_info=True)
-            metrics.steps_failed.append('relevance')
-            article.set_relevance(5, "Scoring error")
-            return 5
-
-    def _step_summarize(
-            self,
-            article: Article,
-            metrics: ProcessingMetrics,
-            verbose: bool
-    ):
-        """Summary/teaser generation step."""
-        if verbose:
-            print("   3️⃣ Creating teaser...")
-
-        try:
-            result = self.summarizer.summarize_with_details(
-                article.title,
-                article.content or ""
-            )
-            article.editorial_teaser = result.teaser
-            metrics.steps_completed.append('summarizer')
-
-            logger.info(f"Teaser created: {len(result.teaser)} chars")
-
-        except Exception as e:
-            logger.error(f"Summarization failed: {e}", exc_info=True)
-            metrics.steps_failed.append('summarizer')
-            # Fallback: first 2 sentences
-            sentences = (article.content or "")[:500].split('.')[:2]
-            article.editorial_teaser = '. '.join(sentences) + '.'
-
-    def _step_rewrite_title(
-            self,
-            article: Article,
-            metrics: ProcessingMetrics,
-            verbose: bool
-    ):
-        """Title improvement step."""
-        if verbose:
-            print("   4️⃣ Improving title...")
-
-        try:
-            result = self.rewriter.rewrite_with_details(
-                article.title,
-                article.content or ""
-            )
-            article.editorial_title = result.improved_title
-            metrics.steps_completed.append('rewriter')
-
-            logger.info(
-                f"Title: '{article.title[:30]}' → '{result.improved_title[:30]}'"
-            )
-
-        except Exception as e:
-            logger.error(f"Title rewriting failed: {e}", exc_info=True)
-            metrics.steps_failed.append('rewriter')
-            article.editorial_title = article.title
-
-    def _step_normalize(
-            self,
-            article: Article,
-            metrics: ProcessingMetrics,
-            verbose: bool,
-            validate: bool
-    ):
-        """Style normalization with optional validation."""
-        if verbose:
-            print(f"   5️⃣ Style normalization... ({self.style_normalizer.model})")
-
-        normalized_content = self._normalize_with_retry(
-            article.content,
-            verbose=verbose,
-            metrics=metrics,
-            validate=validate
-        )
-
-        if normalized_content:
-            article.editorial_rewritten = normalized_content
-            metrics.steps_completed.append('normalization')
-
-            logger.info(
-                f"Normalization: {len(article.content)} → "
-                f"{len(normalized_content)} chars"
-            )
-        else:
-            logger.error("Normalization failed")
-            metrics.steps_failed.append('normalization')
-            article.editorial_rewritten = article.content
-
-    def _normalize_with_retry(
-            self,
-            content: str,
-            verbose: bool,
-            metrics: ProcessingMetrics,
-            validate: bool
-    ) -> Optional[str]:
-        """Normalization with retry on validation failure."""
-        for attempt in range(self.max_retries + 1):
-            try:
-                # Normalize
-                result = self.style_normalizer.normalize_with_details(content)
-                normalized = result.normalized_text
-
-                # Validate
-                if validate and self.enable_validation and self.validator:
-                    validation = self.validator.validate(
-                        original=content,
-                        normalized=normalized,
-                        check_ai=False
-                    )
-
-                    metrics.validation_score = validation.score
-                    metrics.length_ratio = validation.metrics.get('length_ratio', 0)
-
-                    if validation.is_valid:
-                        logger.info(
-                            f"Validation passed: score={validation.score:.2f}"
-                        )
-                        return normalized
-                    else:
-                        logger.warning(
-                            f"Validation failed (attempt {attempt + 1}): "
-                            f"score={validation.score:.2f}, issues={validation.issues}"
-                        )
-
-                        if verbose:
-                            print(f"      ⚠️ Validation failed (attempt {attempt + 1})")
-                            for issue in validation.issues:
-                                print(f"         - {issue}")
-
-                        if attempt >= self.max_retries:
-                            logger.error("All validation attempts failed")
-                            if verbose:
-                                print("      ❌ All attempts failed, using original")
-                            return content
-                else:
-                    # Validation disabled
-                    return normalized
-
-            except Exception as e:
-                logger.error(f"Normalization attempt {attempt + 1} failed: {e}")
-                if attempt >= self.max_retries:
-                    return content
-
-        return content
-
-    def check_health(self) -> Dict[str, Any]:
-        """
-        Check health of all components.
-
-        Returns:
-            Health status dictionary
-        """
-        health = {
-            "orchestrator": "healthy",
-            "provider": self.config.get_provider().value,
-            "profile": self.config.active_profile,
-            "agents": {}
-        }
-
-        # Check each agent
-        agents = [
-            ("classifier", self.classifier),
-            ("relevance", self.relevance),
-            ("summarizer", self.summarizer),
-            ("rewriter", self.rewriter),
-            ("style_normalizer", self.style_normalizer),
-        ]
-
-        if self.validator:
-            agents.append(("validator", self.validator))
-
-        for name, agent in agents:
-            try:
-                health["agents"][name] = {
-                    "model": agent.model,
-                    "status": "healthy",
-                    "metrics": agent.get_metrics()
-                }
-            except Exception as e:
-                health["agents"][name] = {
-                    "status": "error",
-                    "error": str(e)
-                }
-
-        return health
+    def clear_skiplist(self) -> int:
+        """Очистить skiplist."""
+        return self.skiplist.clear()
 
     def get_stats(self) -> Dict[str, Any]:
-        """Get orchestrator statistics."""
-        profile = self.config.get_profile()
-
-        stats = {
-            'active_profile': profile.name,
-            'provider': profile.provider.value,
-            'agents': {},
-            'validation_enabled': self.enable_validation,
-            'max_retries': self.max_retries,
+        """Статистика оркестратора."""
+        return {
+            "provider": self.provider,
+            "strategy": self.strategy,
+            "fallback_enabled": self.enable_fallback,
+            "skiplist": self.skiplist.get_stats(),
+            "agents_initialized": {
+                "classifier": self._classifier is not None,
+                "relevance": self._relevance is not None,
+                "summarizer": self._summarizer is not None,
+                "rewriter": self._rewriter is not None,
+                "normalizer": self._normalizer is not None,
+                "validator": self._validator is not None,
+                "telegram_formatter": self._telegram_formatter is not None,
+            }
         }
 
-        agents = [
-            ('classifier', self.classifier),
-            ('relevance', self.relevance),
-            ('summarizer', self.summarizer),
-            ('rewriter', self.rewriter),
-            ('style_normalizer', self.style_normalizer),
-        ]
-
-        if self.validator:
-            agents.append(('validator', self.validator))
-
-        for name, agent in agents:
-            stats['agents'][name] = agent.get_metrics()
-
-        return stats
-
-    def reset_metrics(self):
-        """Reset all agent metrics."""
-        for agent in [
-            self.classifier, self.relevance, self.summarizer,
-            self.rewriter, self.style_normalizer
-        ]:
-            agent.reset_metrics()
-
-        if self.validator:
-            self.validator.reset_metrics()
-
-        logger.info("All agent metrics reset")
-
 
 # =============================================================================
-# Backward compatibility alias
+# Функции для удобства
 # =============================================================================
-ContentOrchestrator = AIOrchestrator
 
-
-# =============================================================================
-# Convenience factory functions
-# =============================================================================
-def create_orchestrator(
-        provider: str = "ollama",
-        profile: str = "balanced",
-        api_key: Optional[str] = None,
-        **kwargs
-) -> AIOrchestrator:
-    """
-    Create orchestrator with specified settings.
-
-    Args:
-        provider: LLM provider ("ollama" or "openrouter")
-        profile: Config profile ("balanced", "fast", "quality", "cloud_balanced", etc.)
-        api_key: API key for cloud providers
-        **kwargs: Additional orchestrator options
-
-    Returns:
-        Configured AIOrchestrator
-
-    Example:
-        >>> # Local with Ollama
-        >>> orch = create_orchestrator("ollama", "balanced")
-
-        >>> # Cloud with OpenRouter
-        >>> orch = create_orchestrator("openrouter", "cloud_balanced", api_key="sk-...")
-    """
-    import os
-
-    os.environ["LLM_PROVIDER"] = provider
-    os.environ["LLM_PROFILE"] = profile
-
-    if api_key:
-        os.environ["OPENROUTER_API_KEY"] = api_key
-
-    return AIOrchestrator(provider=provider, api_key=api_key, **kwargs)
+def create_orchestrator(provider: str = "openrouter", enable_fallback: bool = True, **kwargs) -> AIOrchestrator:
+    """Создать оркестратор с указанными параметрами."""
+    return AIOrchestrator(provider=provider, enable_fallback=enable_fallback, **kwargs)
 
 
 def create_local_orchestrator(**kwargs) -> AIOrchestrator:
-    """Create orchestrator with local Ollama."""
-    return create_orchestrator(provider="ollama", **kwargs)
+    """Создать оркестратор с локальным Ollama."""
+    return AIOrchestrator(provider="ollama", enable_fallback=False, **kwargs)
 
 
-def create_cloud_orchestrator(
-        api_key: str,
-        profile: str = "cloud_balanced",
-        **kwargs
-) -> AIOrchestrator:
-    """Create orchestrator with OpenRouter cloud."""
-    return create_orchestrator(
-        provider="openrouter",
-        profile=profile,
-        api_key=api_key,
-        **kwargs
-    )
+def create_cloud_orchestrator(provider: str = "openrouter", **kwargs) -> AIOrchestrator:
+    """Создать оркестратор с облачным провайдером."""
+    return AIOrchestrator(provider=provider, enable_fallback=True, **kwargs)
+
+
+# Обратная совместимость
+ContentOrchestrator = AIOrchestrator
