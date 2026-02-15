@@ -1,859 +1,629 @@
-# News Aggregator Pro - Профессиональная Система Агрегации Новостей
+# News Aggregator Pro
 
-**Архитектура**: Hexagonal Architecture + CQRS  
-**Язык**: Python 3.11+  
-**Фреймворк**: FastAPI
+**Профессиональная система агрегации, AI-обработки и публикации технических новостей**
+
+Hexagonal Architecture · FastAPI · 7 AI-агентов · Multi-Provider LLM · Ollama / Groq / Google / OpenRouter
 
 ---
 
 ## Содержание
 
 1. [Обзор](#обзор)
-2. [Ключевые Возможности](#ключевые-возможности)
-3. [Multi-Provider LLM](#multi-provider-llm)
-4. [API Ключи (Бесплатные)](#api-ключи-бесплатные)
-5. [Архитектура](#архитектура)
-6. [Технологический Стек](#технологический-стек)
-7. [Установка](#установка)
-8. [Быстрый Старт](#быстрый-старт)
-9. [Конфигурация LLM Профилей](#конфигурация-llm-профилей)
-10. [Режимы Обработки Статей](#режимы-обработки-статей)
-11. [Ускорение с GPU](#ускорение-с-gpu)
-12. [Использование API](#использование-api)
-13. [Структура Проекта](#структура-проекта)
-14. [Разработка](#разработка)
-15. [Мониторинг и Диагностика](#мониторинг-и-диагностика)
-16. [Production Deployment](#production-deployment)
-17. [Troubleshooting](#troubleshooting)
-18. [Roadmap](#roadmap)
+2. [Архитектура](#архитектура)
+3. [Быстрый старт (Docker)](#быстрый-старт-docker)
+4. [Конфигурация LLM](#конфигурация-llm)
+5. [Per-Agent модели (Ollama)](#per-agent-модели-ollama)
+6. [AI-агенты и пайплайн](#ai-агенты-и-пайплайн)
+7. [StyleNormalizer: Chunking](#stylenormalizer-chunking)
+8. [Запуск Pipeline](#запуск-pipeline)
+9. [API](#api)
+10. [Telegram и Telegraph](#telegram-и-telegraph)
+11. [Оптимизация для Ollama](#оптимизация-для-ollama)
+12. [Структура проекта](#структура-проекта)
+13. [Troubleshooting](#troubleshooting)
 
 ---
 
 ## Обзор
 
-**News Aggregator Pro** — профессиональная система для сбора, обработки и управления новостным контентом из различных источников с использованием AI-технологий для классификации, оценки релевантности и семантического поиска.
+**News Aggregator Pro** собирает статьи с Habr, пропускает через 7-этапный AI-конвейер (классификация → релевантность → тизер → заголовок → рерайт → валидация → Telegram-форматирование), сохраняет в PostgreSQL + Qdrant и публикует в Telegram-канал через Telegraph.
 
-Система построена на принципах **чистой архитектуры** (Hexagonal Architecture) с применением **CQRS паттерна**, что обеспечивает:
-- Полную изоляцию бизнес-логики от внешних зависимостей
-- Высокую тестируемость всех компонентов
-- Легкую расширяемость и масштабируемость
-- Независимость от конкретных фреймворков и библиотек
+### Ключевые возможности
 
----
-
-## Ключевые Возможности
-
-### Multi-Provider LLM с Auto-Fallback
-
-Автоматическое переключение между провайдерами при rate limit (429):
-
-```
-Groq (30 req/min) -> Google Gemini (60 req/min) -> OpenRouter (50 req/day) -> HuggingFace
-```
-
-- **Groq** — самый быстрый inference (Llama 3.1 70B)
-- **Google Gemini** — высокое качество (Gemini 1.5 Flash)
-- **OpenRouter** — доступ к 200+ моделям
-- **HuggingFace** — fallback провайдер
-- **Ollama** — локальные модели (без лимитов)
-
-**Суммарные бесплатные лимиты: ~16,000 запросов/день**
-
-### Сбор и Обработка Контента
-
-**Автоматический парсинг**
-- Сбор статей с Habr.com с поддержкой фильтрации по хабам
-- RSS feeds поддержка
-- Telegram каналы (в разработке)
-- Проверка дубликатов по URL в базе данных
-- Расширяемая архитектура для добавления новых источников
-
-**AI-обработка (6-агентный пайплайн)**
-1. **Classifier** — классификация контента (новости, статьи, обзоры)
-2. **Relevance** — оценка релевантности (0-10 баллов)
-3. **Summarizer** — генерация редакторских тизеров (2-3 предложения)
-4. **Rewriter** — улучшение заголовков для повышения кликабельности
-5. **Style Normalizer** — нормализация стиля текста для единообразия
-6. **Quality Validator** — финальная проверка качества
-
-**Интеллектуальное хранение**
-- PostgreSQL для реляционного хранения всех статей
-- Qdrant для векторного семантического поиска
-- Условное сохранение: все статьи в БД, только качественные (score >= 5) в Qdrant
-- Redis для кэширования и очередей
-
-### Архитектурные Преимущества
-
-**Hexagonal Architecture**
-- Полная изоляция бизнес-логики от infrastructure
-- Легкая замена компонентов (смена БД, AI-моделей)
-- 100% тестируемость через dependency injection
-
-**CQRS Pattern**
-- Разделение команд (запись) и запросов (чтение)
-- Оптимизация производительности для каждого типа операций
-- Независимое масштабирование компонентов
-
-### API и Интеграции
-
-**RESTful API**
-- FastAPI с автоматической документацией (Swagger/OpenAPI)
-- Асинхронные endpoints для высокой производительности
-- Валидация данных через Pydantic v2
-
----
-
-## Multi-Provider LLM
-
-### Архитектура
-
-```
-+-------------------------------------------------------------------+
-|                    MultiProviderWrapper                           |
-|                                                                   |
-|   Request -> Groq --429?--> Google --429?--> OpenRouter --> HF   |
-|               |               |                |            |     |
-|               v               v                v            v     |
-|          Llama 3.1      Gemini 1.5      Llama 3.3     Mistral    |
-|            70B            Flash          70B:free       7B       |
-|                                                                   |
-|   +---------------------------------------------------------+    |
-|   | Cooldown Tracking | Rate Limit Detection | Auto-Retry   |    |
-|   +---------------------------------------------------------+    |
-+-------------------------------------------------------------------+
-```
-
-### Таблица Провайдеров
-
-| Провайдер | Лимит (бесплатно) | Модели | Скорость |
-|-----------|-------------------|--------|----------|
-| **Groq** | 30 req/min, 14K/day | Llama 3.1 70B, Llama 3.1 8B, Mixtral 8x7B | Fastest |
-| **Google** | 60 req/min, 1.5K/day | Gemini 1.5 Flash, Gemini 1.5 Pro | Fast |
-| **OpenRouter** | 50 req/day (free models) | Llama 3.3 70B:free, Gemma 3 27B:free | Medium |
-| **HuggingFace** | Limited | Mistral 7B, модели <10GB | Slow |
-| **Ollama** | Unlimited (local) | Qwen 2.5, Llama, Mistral | Depends on HW |
-
-### Логика Fallback
-
-При получении ошибки 429 (rate limit) или других ошибок:
-1. Провайдер помечается в cooldown (65 сек для Groq/Google, 120 сек для OpenRouter)
-2. Запрос автоматически перенаправляется на следующий доступный провайдер
-3. При дневном лимите — cooldown 1 час
-4. Статистика по каждому провайдеру отслеживается
-
----
-
-## API Ключи (Бесплатные)
-
-**Минимум нужен ОДИН ключ. Рекомендуется получить все для максимальных лимитов.**
-
-### 1. Groq (Рекомендуется)
-
-Самый быстрый inference, щедрые лимиты.
-
-**Лимиты:** 30 req/min, 14,400 req/day  
-**Модели:** Llama 3.1 70B, Llama 3.1 8B, Mixtral 8x7B
-
-```
-1. Регистрация: https://console.groq.com
-2. Перейти в API Keys
-3. Create API Key
-4. Скопировать ключ (начинается с gsk_...)
-```
-
-### 2. Google AI Studio
-
-Высокое качество, большой контекст.
-
-**Лимиты:** 60 req/min, 1,500 req/day  
-**Модели:** Gemini 1.5 Flash, Gemini 1.5 Pro, Gemini 2.0 Flash
-
-```
-1. Перейти: https://aistudio.google.com/apikey
-2. Войти в Google аккаунт
-3. Create API Key
-4. Скопировать ключ (начинается с AIzaSy...)
-```
-
-### 3. OpenRouter
-
-Доступ к 200+ моделям, включая бесплатные.
-
-**Лимиты:** 50 req/day (бесплатные модели, общий лимит)  
-**Модели:** Llama 3.3 70B:free, Gemma 3 27B:free, Mistral 24B:free
-
-```
-1. Регистрация: https://openrouter.ai
-2. Перейти в Keys
-3. Create Key
-4. Скопировать ключ (начинается с sk-or-v1-...)
-```
-
-**Важно:** Для бесплатных моделей нужно включить "Free model publication" в настройках приватности: https://openrouter.ai/settings/privacy
-
-### 4. HuggingFace (Fallback)
-
-Используется как последний резерв.
-
-**Лимиты:** Ограниченный бесплатный tier  
-**Модели:** Mistral 7B, модели размером <10GB
-
-```
-1. Регистрация: https://huggingface.co
-2. Settings -> Access Tokens
-3. New Token (выбрать Read)
-4. Скопировать токен (начинается с hf_...)
-```
+- **7 AI-агентов** — полный цикл обработки статьи от парсинга до публикации
+- **Multi-Provider LLM** — Ollama (локально), Groq, Google Gemini, OpenRouter с автоматическим fallback
+- **Per-Agent модели** — разные модели для разных задач (быстрая для классификации, мощная для рерайта)
+- **Chunking** — обработка статей до 100K символов через разбиение на части
+- **Docker-first** — полный стек в `docker compose up`
 
 ---
 
 ## Архитектура
 
-### Hexagonal Architecture (Ports & Adapters)
-
 ```
-+-------------------------------------------------------------------+
-|                   PRESENTATION LAYER (API)                        |
-|                      FastAPI REST API                             |
-|                   Middleware, Routes, Schemas                     |
-+-----------------------------+-------------------------------------+
-                              |
-                              v
-+-------------------------------------------------------------------+
-|                   APPLICATION LAYER                               |
-|  +----------------+  +-----------------+  +-----------------+     |
-|  |   Commands     |  |    Queries      |  |   AI Agents     |     |
-|  |   (CQRS)       |  |    (CQRS)       |  |   Pipeline      |     |
-|  +----------------+  +-----------------+  +-----------------+     |
-|  +---------------------------------------------------------------+|
-|  |            Application Services                               ||
-|  |     (Координация между Domain и Infrastructure)               ||
-|  +---------------------------------------------------------------+|
-+-----------------------------+-------------------------------------+
-                              |
-                              v
-+-------------------------------------------------------------------+
-|                      DOMAIN LAYER                                 |
-|                   (Чистая бизнес-логика)                          |
-|  +-------------+  +----------------+  +--------------------+      |
-|  |  Entities   |  | Value Objects  |  |  Domain Services   |      |
-|  |  (Article)  |  | (ArticleStatus)|  | (DuplicationCheck) |      |
-|  +-------------+  +----------------+  +--------------------+      |
-|  +---------------------------------------------------------------+|
-|  |           Repository Interfaces (Ports)                       ||
-|  |           Domain Events, Specifications                       ||
-|  +---------------------------------------------------------------+|
-+-----------------------------+-------------------------------------+
-                              |
-                              v
-+-------------------------------------------------------------------+
-|                  INFRASTRUCTURE LAYER                             |
-|                     (Adapters)                                    |
-|  +--------------+  +------------+  +------------------------+     |
-|  |  PostgreSQL  |  |   Redis    |  |   Multi-Provider LLM   |     |
-|  |  Repository  |  |   Cache    |  | (Groq/Google/OpenRouter)|    |
-|  +--------------+  +------------+  +------------------------+     |
-|  +---------------------------------------------------------------+|
-|  |    Qdrant, Message Queue, Config, Scrapers, Parsers           ||
-|  +---------------------------------------------------------------+|
-+-------------------------------------------------------------------+
+┌─────────────────────────────────────────────────────────────┐
+│                        Docker Compose                        │
+├──────────┬──────────┬─────────┬────────┬────────┬───────────┤
+│  FastAPI │  Ollama  │ Postgres│ Qdrant │ Redis  │ Directus  │
+│  (API)   │  (LLM)   │  (DB)   │(Vector)│(Cache) │  (CMS)    │
+├──────────┴──────────┴─────────┴────────┴────────┴───────────┤
+│                      n8n (Automation)                        │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### AI Pipeline
+### Пайплайн обработки
 
 ```
-Article -> Classifier -> Relevance -> Summarizer -> Rewriter -> Normalizer -> Validator -> DB/Qdrant
-              |             |            |             |            |             |
-              v             v            v             v            v             v
-           is_news?    score 0-10    teaser      new_title    style fix    quality OK?
+Habr → Scraper → [Classifier → Relevance → Summarizer → Rewriter
+                   → StyleNormalizer → Validator → TelegramFormatter]
+               → PostgreSQL + Qdrant → Telegraph → Telegram
 ```
-
-### CQRS (Command Query Responsibility Segregation)
-
-**Commands (изменяют состояние)**
-- `CreateArticleCommand` - создание новой статьи
-- `UpdateArticleCommand` - обновление существующей статьи
-- `DeleteArticleCommand` - удаление статьи
-
-**Queries (только чтение)**
-- `GetArticleQuery` - получение статьи по ID
-- `ListArticlesQuery` - список статей с фильтрацией и пагинацией
-- `SearchArticlesQuery` - семантический поиск через Qdrant
 
 ---
 
-## Технологический Стек
+## Быстрый старт (Docker)
 
-### Backend
-- **Python 3.11+** - основной язык программирования
-- **FastAPI** - современный async веб-фреймворк
-- **SQLAlchemy 2.0** - ORM с полной поддержкой async
-- **Pydantic v2** - валидация и сериализация данных
-- **LangChain** - интеграция с LLM провайдерами
-- **Alembic** - миграции базы данных
+### Предварительные требования
 
-### Базы Данных
-- **PostgreSQL 15** - основное реляционное хранилище
-- **Redis 7** - кэш и очереди сообщений
-- **Qdrant** - векторная база данных для семантического поиска
+- Docker и Docker Compose
+- NVIDIA GPU (опционально, для Ollama) + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
+- Минимум 16 GB RAM (с Ollama), 8 GB без
 
-### AI и LLM
-- **Groq** - облачный inference (Llama 3.1 70B)
-- **Google Gemini** - облачный inference (Gemini 1.5 Flash)
-- **OpenRouter** - доступ к 200+ моделям
-- **HuggingFace** - fallback провайдер
-- **Ollama** - локальный сервер для запуска LLM
-- **nomic-embed-text** - модель для создания эмбеддингов
-
-### Инфраструктура
-- **Docker & Docker Compose** - контейнеризация всех компонентов
-- **GitHub Actions** - CI/CD пайплайн
-- **Nginx** - reverse proxy и load balancer (production)
-
-### Инструменты Разработки
-- **pytest** - фреймворк для тестирования
-- **black** - автоматическое форматирование кода
-- **ruff** - быстрый линтер для Python
-- **pre-commit** - git hooks для контроля качества
-
----
-
-## Установка
-
-### Системные Требования
-
-**Минимальные**
-- **OS**: Linux (Ubuntu 20.04+), macOS, Windows 10/11 + WSL2
-- **CPU**: 4 cores
-- **RAM**: 8 GB
-- **Диск**: 20 GB свободного пространства
-- **Docker**: 20.10+
-- **Docker Compose**: 2.0+
-
-**Рекомендуемые**
-- **CPU**: 8+ cores
-- **RAM**: 16-32 GB
-- **GPU**: NVIDIA GPU с 8+ GB VRAM (для локального Ollama)
-- **Диск**: 100 GB SSD
-
-### Клонирование репозитория
+### 1. Клонирование и настройка
 
 ```bash
-git clone https://github.com/vergotten/news-aggregator-pro.git
+git clone https://github.com/your-repo/news-aggregator-pro.git
 cd news-aggregator-pro
-```
-
-### Настройка окружения
-
-```bash
-# Создать файл с переменными окружения
 cp .env.example .env
-
-# Отредактировать .env файл
-nano .env
 ```
 
-**Основные переменные (.env)**
+### 2. Настройка `.env`
 
 ```env
-# ============================================
-# LLM PROVIDERS (минимум один обязателен)
-# ============================================
+# LLM Provider
+LLM_PROVIDER=ollama
+OLLAMA_MODEL=qwen2.5:14b-instruct-q5_k_m
+ENABLE_FALLBACK=false
 
-# Groq - РЕКОМЕНДУЕТСЯ (самый быстрый, 30 req/min)
-GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxxxxxx
+# Для облачных провайдеров (опционально)
+GROQ_API_KEY=gsk_xxx
+GOOGLE_API_KEY=AIzaSy_xxx
+OPENROUTER_API_KEY=sk-or-v1-xxx
 
-# Google Gemini (60 req/min)
-GOOGLE_API_KEY=AIzaSyxxxxxxxxxxxxxxxxxxxxxxxx
+# Telegram (опционально)
+TELEGRAM_BOT_TOKEN=xxx
+TELEGRAM_CHANNEL_ID=@your_channel
+TELEGRAPH_ACCESS_TOKEN=xxx
 
-# OpenRouter (50 req/day free)
-OPENROUTER_API_KEY=sk-or-v1-xxxxxxxxxxxxxxxxxxxxxxxx
+# Database
+POSTGRES_PASSWORD=your_secure_password
+```
 
-# HuggingFace (fallback)
-HUGGINGFACEHUB_API_TOKEN=hf_xxxxxxxxxxxxxxxxxxxxxxxx
+### 3. Запуск
 
-# ============================================
-# LLM CONFIGURATION
-# ============================================
-# Профиль: auto_fallback, groq, google, free_openrouter, balanced
-LLM_PROFILE=auto_fallback
+```bash
+docker compose up -d
+docker compose ps          # Проверить статус
+docker compose logs api -f # Логи API
+```
 
-# ============================================
-# DATABASE
-# ============================================
-POSTGRES_USER=newsaggregator
-POSTGRES_PASSWORD=changeme123
-POSTGRES_DB=newsaggregator
-POSTGRES_PORT=5433
+### 4. Первый запуск pipeline
 
-# ============================================
-# SERVICES
-# ============================================
-REDIS_URL=redis://redis:6379/0
-QDRANT_PORT=6333
-QDRANT_GRPC_PORT=6334
+```bash
+# Через API
+curl -X POST http://localhost:8000/api/v1/pipeline/run \
+  -H "Content-Type: application/json" \
+  -d '{"limit": 1, "provider": "ollama", "no_fallback": true}'
 
-# ============================================
-# API
-# ============================================
-API_PORT=8000
-DEBUG=false
-LOG_LEVEL=INFO
+# Через CLI
+docker compose exec api python run_full_pipeline.py 1 --provider ollama --no-fallback
+```
+
+### 5. `.dockerignore` (важно!)
+
+Если в проекте есть папка `ollama_models/`, добавьте `.dockerignore` чтобы Docker не копировал модели (десятки GB) внутрь контейнера:
+
+```
+ollama_models/
+.git/
+__pycache__/
+.venv/
+logs/
+cache/
+*.log
 ```
 
 ---
 
-## Быстрый Старт
+## Конфигурация LLM
 
-### 1. Запуск сервисов
+### Приоритет конфигурации
 
-```bash
-# Установить зависимости LLM провайдеров
-pip install langchain-groq langchain-google-genai langchain-huggingface
-
-# Запустить все контейнеры в фоновом режиме
-docker-compose up -d
-
-# Проверить статус всех сервисов
-docker-compose ps
-
-# Просмотр логов
-docker-compose logs -f
+```
+CLI аргументы  →  ENV переменные  →  config/models.yaml  →  hardcoded defaults
+  (высший)           (средний)           (основной)             (низший)
 ```
 
-### 2. Проверка работоспособности
-
-```bash
-# Проверить health endpoint API
-curl http://localhost:8000/health
-
-# Открыть API документацию в браузере
-# http://localhost:8000/docs
-```
-
-### 3. Проверка LLM провайдеров
-
-```bash
-docker-compose exec api python -c "
-from src.infrastructure.ai.llm_provider import get_llm_provider
-
-llm = get_llm_provider('auto')
-print('Доступные провайдеры:', llm.get_stats()['available'])
-print('Тест:', llm.generate('Скажи привет одним словом'))
-print('Использован провайдер:', llm.get_current_provider())
-"
-```
-
-### 4. Первый запуск обработки статей
-
-```bash
-# Запустить парсинг и обработку 10 статей
-docker-compose exec api python run_full_pipeline_fixed.py 10
-
-# С фильтрацией по хабам
-docker-compose exec api python run_full_pipeline_fixed.py 20 "python,devops"
-
-# Проверить результаты в базе данных
-docker-compose exec postgres psql -U newsaggregator -d newsaggregator -c "
-SELECT 
-    COUNT(*) as total,
-    COUNT(*) FILTER (WHERE relevance_score IS NOT NULL) as processed,
-    AVG(relevance_score)::numeric(3,1) as avg_score
-FROM articles;
-"
-```
-
----
-
-## Конфигурация LLM Профилей
-
-Файл `config/models.yaml` определяет профили для разных сценариев использования.
-
-### Доступные Профили
+### `config/models.yaml` — главный конфиг
 
 ```yaml
-# Активный профиль по умолчанию
-active_profile: auto_fallback
+defaults:
+  provider: ollama
+  strategy: balanced
+  enable_fallback: true
 
-profiles:
-  # Автоматический выбор с fallback (рекомендуется)
-  auto_fallback:
-    provider: auto
-    agents:
-      classifier:
-        model: "auto"
-        temperature: 0.3
-      summarizer:
-        model: "auto"
-        temperature: 0.5
+ollama:
+  model: qwen2.5:14b-instruct-q5_k_m   # Дефолтная модель
+  base_url: http://ollama:11434
+  context_length: 32768
 
-  # Только Groq (самый быстрый)
-  groq:
-    provider: groq
-    agents:
-      classifier:
-        model: "llama-3.1-8b-instant"
-        temperature: 0.3
-      summarizer:
-        model: "llama-3.1-70b-versatile"
-        temperature: 0.5
+# Per-agent модели (опционально, см. раздел ниже)
+agent_models:
+  rewriter: glm-4.7-flash:q4_K_M
+  style_normalizer: glm-4.7-flash:q4_K_M
+  telegram_formatter: glm-4.7-flash:q4_K_M
 
-  # Только Google Gemini
-  google:
-    provider: google
-    agents:
-      classifier:
-        model: "gemini-1.5-flash"
-        temperature: 0.3
-      summarizer:
-        model: "gemini-1.5-flash"
-        temperature: 0.5
-
-  # Бесплатные модели OpenRouter
-  free_openrouter:
-    provider: openrouter
-    agents:
-      classifier:
-        model: "meta-llama/llama-3.3-70b-instruct:free"
-        temperature: 0.3
-      summarizer:
-        model: "meta-llama/llama-3.3-70b-instruct:free"
-        temperature: 0.5
-
-  # Локальный Ollama
-  balanced:
-    provider: ollama
-    agents:
-      classifier:
-        model: "qwen2.5:14b-instruct-q5_k_m"
-        temperature: 0.3
-      summarizer:
-        model: "qwen2.5:14b-instruct-q5_k_m"
-        temperature: 0.5
+temperatures:
+  classifier: 0.1
+  relevance: 0.3
+  quality_validator: 0.1
+  summarizer: 0.5
+  rewriter: 0.7
+  style_normalizer: 0.3
+  telegram_formatter: 0.5
 ```
 
-### Переключение профиля
+### Провайдеры
 
-```bash
-# Через переменную окружения
-export LLM_PROFILE=groq
-docker-compose restart api
+| Провайдер | Лимит (бесплатно) | Скорость | Качество |
+|-----------|-------------------|----------|----------|
+| **Ollama** | Без лимитов (локально) | Зависит от GPU | ⭐⭐⭐⭐ |
+| **Groq** | 30 req/min, 14K/day | Самый быстрый | ⭐⭐⭐⭐ |
+| **Google Gemini** | 60 req/min, 1.5K/day | Быстро | ⭐⭐⭐⭐⭐ |
+| **OpenRouter** | 50 req/day (free tier) | Средне | ⭐⭐⭐⭐ |
 
-# Или в .env файле
-LLM_PROFILE=auto_fallback
+### Smart Fallback
+
+```
+Primary Provider → Fallback #1 → Fallback #2 → Fallback #3
+     Groq       →   OpenRouter  →    Google   →    Ollama
 ```
 
-### Использование в коде
+При ошибке или rate limit (429) система автоматически переключается на следующего провайдера. Отключается через `--no-fallback` или `ENABLE_FALLBACK=false`.
 
-```python
-from src.infrastructure.ai.llm_provider import get_llm_provider
+---
 
-# Автоматический выбор с fallback
-llm = get_llm_provider("auto")
-response = llm.generate("Привет!")
-print(llm.get_current_provider())  # "groq" или другой доступный
+## Per-Agent модели (Ollama)
 
-# Конкретный провайдер
-llm = get_llm_provider("groq", model="llama-3.1-70b-versatile")
+Разные задачи требуют разных моделей. Классификация — быстрая и лёгкая задача, а рерайт текста — тяжёлая. Система поддерживает назначение отдельной модели каждому агенту.
 
-# Конкретный провайдер без fallback
-llm = get_llm_provider("groq", use_fallback=False)
+### Как работает
 
-# Статистика по провайдерам
-print(llm.get_stats())
-# {
-#   'available': ['groq', 'google', 'openrouter'],
-#   'current': 'groq',
-#   'stats': {'groq': {'success': 10, 'failed': 0, 'in_cooldown': False}, ...}
-# }
+Приоритет выбора модели для каждого агента:
+
+```
+agent_models.<agent_name>  →  env OLLAMA_MODEL  →  ollama.model  →  default
+     (из YAML)                  (из .env)           (из YAML)       (hardcoded)
+```
+
+### Конфигурация в `models.yaml`
+
+```yaml
+ollama:
+  model: qwen2.5:14b-instruct-q5_k_m   # Дефолт для лёгких задач
+
+agent_models:
+  # Лёгкие задачи → используют ollama.model (qwen)
+  # classifier:        (не указан — берёт дефолт)
+  # relevance:         (не указан — берёт дефолт)
+  # quality_validator: (не указан — берёт дефолт)
+  # summarizer:        (не указан — берёт дефолт)
+
+  # Генерация текста → тяжёлая модель
+  rewriter: glm-4.7-flash:q4_K_M
+  style_normalizer: glm-4.7-flash:q4_K_M
+  telegram_formatter: glm-4.7-flash:q4_K_M
+```
+
+### Результат
+
+| Агент | Модель | Задача |
+|-------|--------|--------|
+| ClassifierAgent | qwen2.5:14b | JSON-классификация |
+| RelevanceAgent | qwen2.5:14b | Числовой score |
+| SummarizerAgent | qwen2.5:14b | Короткий тизер |
+| QualityValidatorAgent | qwen2.5:14b | Да/нет валидация |
+| **RewriterAgent** | **glm-4.7-flash** | **Переписание заголовка** |
+| **StyleNormalizerAgent** | **glm-4.7-flash** | **Полный рерайт статьи** |
+| **TelegramFormatterAgent** | **glm-4.7-flash** | **Форматирование текста** |
+
+### Переключение моделей и GPU
+
+Ollama автоматически выгружает/загружает модели при переключении. На одной GPU одновременно живёт одна модель, переключение занимает ~5–10 секунд. Модели кэшируются в VRAM на 5 минут после последнего запроса (`OLLAMA_KEEP_ALIVE`).
+
+Если обе модели не помещаются в VRAM одновременно — закомментируйте `agent_models` и используйте одну модель для всего:
+
+```yaml
+# agent_models:
+#   rewriter: glm-4.7-flash:q4_K_M
+#   style_normalizer: glm-4.7-flash:q4_K_M
+#   telegram_formatter: glm-4.7-flash:q4_K_M
 ```
 
 ---
 
-## Режимы Обработки Статей
+## AI-агенты и пайплайн
 
-Система поддерживает три режима работы для различных сценариев использования.
+### Схема обработки
 
-### Режим 1: Быстрый Парсинг (без AI обработки)
-
-**Скрипт**: `run_scraper.py`  
-**Назначение**: Массовый сбор статей без AI анализа  
-**Скорость**: 1-2 секунды на статью  
-**Результат**: Статьи сохраняются в PostgreSQL без оценки релевантности
-
-```bash
-# Базовое использование - собрать 50 статей
-docker-compose exec api python run_scraper.py 50
-
-# С фильтрацией по хабам
-docker-compose exec api python run_scraper.py 100 "python,machine-learning,devops"
+```
+ВХОДНАЯ СТАТЬЯ (заголовок + контент + метаданные)
+         │
+         ▼
+┌─ ШАГ 1: ClassifierAgent ──────────────────────────────────────┐
+│  Тип: НОВОСТЬ или СТАТЬЯ  │  Модель: light  │  ~2-10 сек     │
+└────────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌─ ШАГ 2: RelevanceAgent ───────────────────────────────────────┐
+│  Оценка: 0-10 для IT-аудитории  │  Модель: light             │
+└────────────────────────────────────────────────────────────────┘
+         │
+         ▼  (score < min_relevance → SKIP)
+         │
+┌─ ШАГ 3: SummarizerAgent ──────────────────────────────────────┐
+│  Тизер: 2-4 предложения  │  Модель: medium                    │
+└────────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌─ ШАГ 4: RewriterAgent ────────────────────────────────────────┐
+│  Заголовок: информативный, 40-80 символов  │  Модель: medium  │
+└────────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌─ ШАГ 5: StyleNormalizerAgent ─────────────────────────────────┐
+│  Рерайт: нормализация стиля + chunking  │  Модель: heavy      │
+└────────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌─ ШАГ 6: QualityValidatorAgent ────────────────────────────────┐
+│  Валидация: длина, соотношение, артефакты  │  Модель: light    │
+└────────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌─ ШАГ 7: TelegramFormatterAgent ───────────────────────────────┐
+│  Форматирование: HTML для Telegram  │  Модель: medium         │
+└────────────────────────────────────────────────────────────────┘
+         │
+         ▼
+ОБРАБОТАННАЯ СТАТЬЯ → PostgreSQL + Qdrant → Telegraph → Telegram
 ```
 
-### Режим 2: Полный Конвейер (парсинг + AI + сохранение)
+### Типы задач (TaskType)
 
-**Скрипт**: `run_full_pipeline_fixed.py`  
-**Назначение**: Полный цикл обработки - от парсинга до векторной базы  
-**Скорость**: 5-15 секунд на статью (зависит от провайдера)  
-**Результат**: Полностью обработанные и проанализированные статьи
-
-```bash
-# Базовое использование - 10 статей
-docker-compose exec api python run_full_pipeline_fixed.py 10
-
-# С конкретными хабами
-docker-compose exec api python run_full_pipeline_fixed.py 20 "python,devops"
-```
-
-### Режим 3: Обработка Существующих Статей
-
-**Скрипт**: `process_existing_articles.py`  
-**Назначение**: AI анализ статей, уже находящихся в базе данных  
-**Скорость**: 5-15 секунд на статью  
-**Результат**: Обновление записей в БД с AI-метаданными
-
-```bash
-# Обработать все статьи без AI анализа
-docker-compose exec api python process_existing_articles.py
-
-# Обработать только 10 статей
-docker-compose exec api python process_existing_articles.py --limit 10
-
-# Статьи за последние 7 дней
-docker-compose exec api python process_existing_articles.py --days 7
-```
-
-### Сравнительная Таблица
-
-| Характеристика | Парсинг | Полный Конвейер | Обработка Существующих |
-|---------------|---------|-----------------|----------------------|
-| **Источник данных** | Habr.com | Habr.com | PostgreSQL |
-| **AI обработка** | Нет | Да | Да |
-| **Сохранение в БД** | Да | Да | Да (обновление) |
-| **Добавление в Qdrant** | Нет | Условно (score >= 5) | Условно (score >= 5) |
-
-### Производительность по провайдерам (10 статей)
-
-| Провайдер | Время | Качество |
-|-----------|-------|----------|
-| Groq | ~50 сек | Отличное |
-| Google | ~60 сек | Отличное |
-| OpenRouter | ~90 сек | Хорошее |
-| Ollama (local) | ~5 мин | Хорошее |
+| Тип | Описание | Примеры |
+|-----|----------|---------|
+| `LIGHT` | Простые, быстрые | Classifier, Relevance, Validator |
+| `MEDIUM` | Средние | Summarizer, Rewriter, Formatter |
+| `HEAVY` | Тяжёлые, длинная генерация | StyleNormalizer |
 
 ---
 
-## Ускорение с GPU
+## StyleNormalizer: Chunking
 
-Для локального Ollama можно использовать GPU для ускорения в 3-4 раза.
+### Проблема
 
-### Требования
+Локальные модели ограничены контекстным окном (~32K токенов). Длинные статьи (10K+ символов) могут вызвать timeout или обрезку.
 
-- NVIDIA GPU с 8+ GB VRAM
-- NVIDIA драйвера (версия 525+)
-- nvidia-container-toolkit
+### Решение
+
+StyleNormalizerAgent разбивает текст на чанки по абзацам, обрабатывает каждый отдельно и склеивает результат:
+
+```
+Статья 24873 символов
+         │
+    ┌────┼────┬────┐
+    ▼    ▼    ▼    ▼
+ Chunk1 Chunk2 Chunk3 Chunk4
+ 10282  5388   5299   3862
+    │    │      │      │
+    ▼    ▼      ▼      ▼
+  5712  4318   4361   3337    (каждый обработан отдельно)
+    │    │      │      │
+    └────┼──────┼──────┘
+         ▼
+   Результат: 17734 символов (71% от оригинала)
+```
+
+### Параметры
+
+| Параметр | Значение | Описание |
+|----------|----------|----------|
+| `MAX_CONTENT_LENGTH` | 8000 | Порог для включения chunking |
+| `MAX_CHUNK_SIZE` | 6000 | Максимум символов в одном чанке |
+| `MIN_RESPONSE_RATIO` | 0.3 | Минимум 30% от входа (иначе fallback) |
+| `max_tokens` | `len(chunk) // 2 + 1000` | Адаптивно по размеру чанка |
+
+### Fallback
+
+Если LLM возвращает слишком короткий ответ, применяется базовая очистка без LLM: удаление приветствий ("Привет, Хабр!"), прощаний ("Спасибо за внимание"), конвертация первого лица в безличную форму.
+
+---
+
+## Запуск Pipeline
+
+### Через HTTP API (рекомендуется для автоматизации)
+
+```bash
+# Запуск
+curl -X POST http://localhost:8000/api/v1/pipeline/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "limit": 10,
+    "provider": "ollama",
+    "no_fallback": true,
+    "publish_telegraph": true,
+    "publish_telegram": true,
+    "min_publish_score": 7
+  }'
+
+# Проверка статуса
+curl http://localhost:8000/api/v1/pipeline/status
+
+# Остановка (сброс блокировки)
+curl -X POST http://localhost:8000/api/v1/pipeline/stop
+```
+
+### Через CLI
+
+```bash
+# Ollama, 10 статей, с публикацией
+docker compose exec api python run_full_pipeline.py 10 \
+  --provider ollama --no-fallback --publish
+
+# Groq с fallback
+docker compose exec api python run_full_pipeline.py 10 --provider groq
+
+# Google, только Telegraph
+docker compose exec api python run_full_pipeline.py 10 \
+  --provider google --telegraph --min-publish-score 8
+
+# Через ENV
+docker compose exec -e LLM_PROVIDER=ollama -e ENABLE_FALLBACK=false \
+  api python run_full_pipeline.py 5
+```
+
+### Через n8n (автоматизация по расписанию)
+
+HTTP Request Node → `POST http://api:8000/api/v1/pipeline/run`
+
+```json
+{
+  "limit": 10,
+  "publish_telegraph": true,
+  "publish_telegram": true
+}
+```
+
+### Параметры CLI
+
+| Флаг | Описание | По умолчанию |
+|------|----------|--------------|
+| `--provider` | LLM провайдер (ollama/groq/google/openrouter) | из .env |
+| `--no-fallback` | Отключить fallback | false |
+| `--strategy` | Стратегия (balanced/cost_optimized/quality_focused) | balanced |
+| `--publish` | Telegraph + Telegram | false |
+| `--telegraph` | Только Telegraph | false |
+| `--telegram` | Только Telegram | false |
+| `--min-publish-score` | Мин. score для публикации | 7 |
+| `--min-relevance` | Мин. score для Qdrant | 5 |
+| `--max-retries` | Макс. повторов | 3 |
+| `--verbose` | Подробный вывод | false |
+
+---
+
+## API
+
+Swagger UI: [http://localhost:8000/docs](http://localhost:8000/docs)
+
+### Основные эндпоинты
+
+| Метод | Путь | Описание |
+|-------|------|----------|
+| `POST` | `/api/v1/pipeline/run` | Запустить pipeline |
+| `GET` | `/api/v1/pipeline/status` | Статус pipeline |
+| `POST` | `/api/v1/pipeline/stop` | Остановить pipeline |
+
+---
+
+## Telegram и Telegraph
+
+### Процесс публикации
+
+1. **Pipeline** обрабатывает статью (score ≥ `min_publish_score`)
+2. **TelegraphPublisher** создаёт страницу на Telegraph с полным текстом + изображениями
+3. **TelegramPublisher** отправляет пост в канал: заголовок + тизер + ссылка на Telegraph
 
 ### Настройка
 
-```bash
-# Установить nvidia-container-toolkit (Ubuntu)
-distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | \
-    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-
-sudo apt-get update
-sudo apt-get install -y nvidia-container-toolkit
-sudo nvidia-ctk runtime configure --runtime=docker
-sudo systemctl restart docker
+```env
+# .env
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
+TELEGRAM_CHANNEL_ID=@your_channel
+TELEGRAPH_ACCESS_TOKEN=your_token
 ```
 
-### Проверка
+Получение Telegraph токена:
 
 ```bash
-docker run --rm --gpus all nvidia/cuda:12.0.0-base-ubuntu22.04 nvidia-smi
+curl https://api.telegra.ph/createAccount?short_name=NewsBot&author_name=News
 ```
 
 ---
 
-## Использование API
+## Оптимизация для Ollama
 
-### Swagger UI
+### Рекомендуемые модели
 
-Откройте в браузере: **http://localhost:8000/docs**
+| Модель | VRAM | Качество | Скорость |
+|--------|------|----------|----------|
+| `qwen2.5:7b-instruct` | 6 GB | ⭐⭐⭐ | Быстро |
+| `qwen2.5:14b-instruct-q5_k_m` | 12 GB | ⭐⭐⭐⭐ | Средне |
+| `qwen2.5:32b-instruct-q4_k_m` | 24 GB | ⭐⭐⭐⭐⭐ | Медленно |
+| `glm-4.7-flash:q4_K_M` | 18 GB | ⭐⭐⭐⭐⭐ (генерация) | Медленно |
 
-### Основные Endpoints
+### GPU-специфичные рекомендации
 
-```bash
-# Health Check
-curl http://localhost:8000/health
+| GPU | VRAM | Рекомендуемая модель |
+|-----|------|---------------------|
+| GTX 1080 Ti | 11 GB | `qwen2.5:14b-instruct-q5_k_m` (частично на CPU) |
+| RTX 3060 | 12 GB | `qwen2.5:14b-instruct-q5_k_m` |
+| RTX 3090/4090 | 24 GB | `qwen2.5:32b` или per-agent (qwen + glm) |
 
-# Список статей
-curl "http://localhost:8000/api/v1/articles/?limit=20"
+### Docker Compose для GPU
 
-# С фильтрацией
-curl "http://localhost:8000/api/v1/articles/?is_news=true&min_relevance=7"
-
-# Семантический поиск
-curl -X POST "http://localhost:8000/api/v1/articles/search" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "машинное обучение на Python", "limit": 10}'
+```yaml
+# docker-compose.yml (фрагмент)
+ollama:
+  image: ollama/ollama:0.9.6
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: 1
+            capabilities: [gpu]
+  volumes:
+    - ollama_models:/root/.ollama
 ```
 
-### Python Client
-
-```python
-import httpx
-
-BASE_URL = "http://localhost:8000"
-
-# Список статей
-response = httpx.get(f"{BASE_URL}/api/v1/articles/", params={"limit": 10})
-articles = response.json()
-
-# Поиск
-response = httpx.post(
-    f"{BASE_URL}/api/v1/articles/search",
-    json={"query": "Python машинное обучение", "limit": 5}
-)
-results = response.json()
-```
+Модели монтируются через Docker volume — не нужно копировать их внутрь контейнера.
 
 ---
 
-## Структура Проекта
+## Структура проекта
 
 ```
 news-aggregator-pro/
-|
-+-- src/                                   # Исходный код
-|   +-- api/                              # Presentation Layer (FastAPI)
-|   |   +-- routes/                       # HTTP endpoints
-|   |   +-- middleware/                   # Middleware
-|   |   +-- schemas/                      # Pydantic схемы
-|   |
-|   +-- application/                      # Application Layer
-|   |   +-- commands/                     # CQRS Commands
-|   |   +-- queries/                      # CQRS Queries
-|   |   +-- services/                     # Application Services
-|   |   +-- ai_services/                  # AI Agents Pipeline
-|   |       +-- agents/                   # Специализированные агенты
-|   |
-|   +-- domain/                           # Domain Layer
-|   |   +-- entities/                     # Domain Entities
-|   |   +-- value_objects/                # Value Objects
-|   |   +-- repositories/                 # Repository Interfaces
-|   |
-|   +-- infrastructure/                   # Infrastructure Layer
-|   |   +-- database/                     # PostgreSQL
-|   |   +-- ai/                          # LLM Providers
-|   |   |   +-- llm_provider.py          # Multi-Provider с Fallback
-|   |   +-- vector_store/                # Qdrant
-|   |   +-- parsers/                     # Scrapers
-|   |
-|   +-- main.py                          # Entry Point
-|
-+-- config/                               # Конфигурация
-|   +-- models.yaml                      # LLM профили
-|
-+-- tests/                                # Тесты
-+-- scripts/                              # Утилиты
-+-- .github/workflows/                    # CI/CD
-|
-+-- docker-compose.yml
-+-- Dockerfile
-+-- requirements.txt
-+-- .env.example
-+-- README.md
+├── config/
+│   └── models.yaml                    # Конфигурация LLM и агентов
+├── src/
+│   ├── api/routes/
+│   │   └── pipeline.py                # HTTP API для pipeline
+│   ├── application/ai_services/
+│   │   ├── agents/
+│   │   │   ├── base_agent.py          # Базовый класс агентов
+│   │   │   ├── classifier_agent.py    # Классификация
+│   │   │   ├── relevance_agent.py     # Релевантность
+│   │   │   ├── summarizer_agent.py    # Тизеры
+│   │   │   ├── rewriter_agent.py      # Заголовки
+│   │   │   ├── style_normalizer_agent.py  # Рерайт + chunking
+│   │   │   ├── quality_validator_agent.py # Валидация
+│   │   │   └── telegram_formatter_agent.py
+│   │   └── orchestrator.py            # Оркестратор пайплайна
+│   ├── config/
+│   │   └── models_config.py           # ModelsConfig + per-agent routing
+│   ├── infrastructure/
+│   │   ├── ai/
+│   │   │   ├── llm_provider.py        # Multi-provider + factory
+│   │   │   ├── ollama_client.py       # Ollama HTTP client
+│   │   │   └── qdrant_client.py       # Vector search
+│   │   ├── telegram/
+│   │   │   ├── telegraph_publisher.py
+│   │   │   └── telegram_publisher.py
+│   │   └── skiplist/                   # Пропуск проблемных URL
+│   ├── domain/entities/
+│   │   └── article.py                 # Доменная модель статьи
+│   └── scrapers/habr/
+│       └── scraper_service.py         # Парсер Habr
+├── run_full_pipeline.py               # CLI для полного конвейера
+├── docker-compose.yml
+├── .env.example
+├── .dockerignore
+└── README.md
 ```
 
 ---
 
 ## Troubleshooting
 
-### Проблема: Все провайдеры возвращают 429
+### Pipeline timeout (10 мин)
+
+Модель слишком тяжёлая для GPU. StyleNormalizer на длинных статьях может не укладываться в timeout.
 
 ```bash
-# Проверить статус провайдеров
-docker-compose exec api python -c "
-from src.infrastructure.ai.llm_provider import get_llm_provider
-llm = get_llm_provider('auto')
-print(llm.get_stats())
-"
+# Решение 1: Использовать более лёгкую модель
+# .env: OLLAMA_MODEL=qwen2.5:7b-instruct
 
-# Подождать 1-2 минуты (cooldown автоматически сбросится)
+# Решение 2: Закомментировать agent_models (одна модель для всего)
+# config/models.yaml: # agent_models: ...
 ```
 
-### Проблема: "GROQ_API_KEY не установлен"
+### Агент возвращает пустой ответ (0 chars)
+
+Некоторые модели (например, GLM) чувствительны к формату промпта и могут не генерировать ответ. Используйте qwen2.5 — она стабильна на всех агентах.
+
+### Все провайдеры возвращают 429
+
+Rate limit. Подождите 1–2 минуты или переключитесь на Ollama:
 
 ```bash
-# Проверить .env
-cat .env | grep GROQ
-
-# Перезапустить с новыми переменными
-docker-compose down && docker-compose up -d
+docker compose exec -e LLM_PROVIDER=ollama api python run_full_pipeline.py 5
 ```
 
-### Проблема: "No module named 'langchain_groq'"
+### Docker build копирует 30 GB
+
+Нет `.dockerignore`. Добавьте файл с исключением `ollama_models/` — модели монтируются через volume, копировать не нужно.
+
+### Модель не найдена в Ollama
 
 ```bash
-docker-compose exec api pip install langchain-groq langchain-google-genai langchain-huggingface
-docker-compose restart api
+# Скачать модель
+docker compose exec ollama ollama pull qwen2.5:14b-instruct-q5_k_m
+
+# Проверить доступные
+docker compose exec ollama ollama list
 ```
 
-### Просмотр логов
+### Логи
 
 ```bash
-# Все логи
-docker-compose logs -f
+# Все логи API
+docker compose logs api -f
 
-# Только API
-docker-compose logs api -f
+# Фильтр по LLM
+docker compose logs api -f | grep -E "(model=|Ollama|Chunk|StyleNormalizer)"
 
-# С фильтрацией
-docker-compose logs api -f | grep -E "(ERROR|WARNING|провайдер)"
+# Только ошибки
+docker compose logs api -f | grep -E "(ERROR|WARNING)"
 ```
+
+---
+
+## API ключи (бесплатные)
+
+Для облачных провайдеров нужен минимум один ключ:
+
+| Провайдер | Регистрация | Формат ключа |
+|-----------|-------------|--------------|
+| **Groq** | [console.groq.com](https://console.groq.com) | `gsk_...` |
+| **Google AI** | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | `AIzaSy...` |
+| **OpenRouter** | [openrouter.ai](https://openrouter.ai/keys) | `sk-or-v1-...` |
+
+Для Ollama ключи не нужны — модели работают локально.
 
 ---
 
 ## Roadmap
 
-### Текущая Версия (3.0)
-- [x] Multi-provider LLM (Groq, Google, OpenRouter, HuggingFace)
-- [x] Auto-fallback при rate limit
-- [x] 6-агентный AI пайплайн
-- [x] GitHub Actions CI/CD
-- [x] Hexagonal Architecture
-- [x] CQRS pattern
-- [x] PostgreSQL + Qdrant + Redis
-- [x] Habr.com scraper
-
-### Версия 3.1
-- [ ] Telegram scraper
-- [ ] RSS feeds scraper
-- [ ] WebSocket real-time updates
-- [ ] Prometheus metrics
-
-### Версия 4.0
-- [ ] React Admin Panel
-- [ ] User authentication (JWT)
-- [ ] Kubernetes deployment
-- [ ] Elasticsearch integration
-
----
-
-## Лицензия
-
-MIT
-
----
-
-## Быстрые Ссылки
-
-| Ресурс | URL |
-|--------|-----|
-| API Docs | http://localhost:8000/docs |
-| Groq Console | https://console.groq.com |
-| Google AI Studio | https://aistudio.google.com/apikey |
-| OpenRouter | https://openrouter.ai/keys |
-| HuggingFace Tokens | https://huggingface.co/settings/tokens |
+- [x] Multi-provider LLM с Smart Fallback
+- [x] 7-агентный AI пайплайн с chunking
+- [x] Per-agent модели (models.yaml → agent_models)
+- [x] Telegram + Telegraph публикация
+- [x] Skiplist для проблемных URL
+- [x] Docker-first деплой
+- [ ] Web UI для управления (Streamlit)
+- [ ] Prometheus метрики
+- [ ] Параллельная обработка чанков
+- [ ] RAG (семантический поиск по статьям)
+- [ ] Мультиязычная поддержка
