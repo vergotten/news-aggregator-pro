@@ -1,354 +1,402 @@
 # -*- coding: utf-8 -*-
-# =============================================================================
-# Путь: src/application/ai_services/agents/style_normalizer_agent.py
-# =============================================================================
 """
-Расширенный агент нормализации стиля с LangChain.
+Агент нормализации стиля v9.4 - PRODUCTION FIX
 
-Removes personal voice, maintains objectivity for professional content.
+Ключевые изменения от v9.3:
+1. МЕНЬШИЕ чанки (8000 символов) - модель лучше справляется
+2. РЕАЛИСТИЧНЫЙ min_response (30% вместо 50%)
+3. Улучшенный промпт с явными инструкциями
+4. Fallback на minimal_cleanup если модель не справляется
+5. Увеличен timeout в запросах
 """
 
 import logging
 import re
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel, Field
 
-from src.application.ai_services.agents.base_agent import BaseAgent
-from src.infrastructure.ai.llm_provider import LLMProvider
-from src.config.models_config import ModelsConfig
+from src.application.ai_services.agents.base_agent import BaseAgent, TaskType, ContextLimitError
 
 logger = logging.getLogger(__name__)
 
+# =============================================================================
+# КРИТИЧЕСКИЕ НАСТРОЙКИ ДЛЯ OLLAMA
+# =============================================================================
+# qwen2.5:14b часто останавливается рано на длинных текстах
+# Решение: меньшие чанки + менее строгие требования к длине ответа
+
+MAX_CONTENT_LENGTH = 8000
+MAX_CHUNK_SIZE = 6000
+CHUNK_OVERLAP = 200
+
+# Минимальный ответ = 30% от входа (было 50%)
+MIN_RESPONSE_RATIO = 0.3
+
+# Если ответ короче этого - используем fallback
+ABSOLUTE_MIN_RESPONSE = 200
+
 
 class NormalizationResult(BaseModel):
-    """Структурированный вывод для нормализации стиля."""
-    
-    normalized_text: str = Field(
-        description="Text with personal pronouns removed, objective style"
-    )
-    changes_made: list[str] = Field(
-        default_factory=list,
-        description="List of changes applied"
-    )
-    personal_pronouns_removed: int = Field(
-        default=0,
-        description="Count of personal pronouns removed"
-    )
-    length_ratio: float = Field(
-        default=1.0,
-        description="Ratio of normalized length to original"
-    )
+    """Результат нормализации."""
+    normalized_text: str = Field(description="Нормализованный текст")
+    changes_made: list[str] = Field(default_factory=list)
+    personal_pronouns_removed: int = Field(default=0)
+    length_ratio: float = Field(default=1.0)
+    chunks_processed: int = Field(default=1)
+    used_fallback: bool = Field(default=False)
+
+
+class StyleNormalizationResult(BaseModel):
+    """Результат для orchestrator."""
+    normalized_text: str = Field(description="Нормализованный текст")
+    original_issues: List[str] = Field(default_factory=list)
+    improvements_made: List[str] = Field(default_factory=list)
+    processing_time: Optional[float] = Field(default=None)
 
 
 class StyleNormalizerAgent(BaseAgent):
     """
-    Агент для normalizing article style to objective professional tone.
-    
-    Main tasks:
-    - Remove personal pronouns ("I", "we", "my", "our")
-    - Remove greetings and farewells
-    - Remove calls to action ("subscribe", "like")
-    - Replace subjective statements with objective ones
-    - Maintain content length and facts
-    
-    CRITICAL:
-    - max_tokens must be sufficient for full text (8000+ recommended)
-    - Text length should be preserved (ratio ~0.9-1.1)
-    
-    Пример:
-        >>> agent = StyleNormalizerAgent()
-        >>> normalized = agent.normalize_full_text("I wrote this code...")
-        >>> print(normalized)  # "This code was developed..."
+    Агент нормализации стиля
+
+    Оптимизирован для работы с Ollama/qwen2.5:14b:
+    - Маленькие чанки (6-8K символов)
+    - Реалистичные ожидания по длине ответа
+    - Агрессивный fallback на minimal_cleanup
     """
-    
+
     agent_name = "style_normalizer"
-    
-    SYSTEM_PROMPT = """You are a professional editor specializing in converting personal narratives to objective technical content.
+    task_type = TaskType.HEAVY
+    MIN_RESPONSE_LENGTH = ABSOLUTE_MIN_RESPONSE
 
-Your task is to rewrite text removing all personal pronouns while:
-- Preserving ALL facts, data, and technical information
-- Maintaining the same length (don't shorten!)
-- Keeping professional, neutral tone
-- Using passive voice or impersonal constructions"""
-    
-    NORMALIZATION_PROMPT = """Rewrite this article text, removing all personal references while maintaining objective professional style.
+    EXCLUDED_MODELS = [
+        "nvidia/nemotron-3-nano-30b-a3b:free",
+        "meta-llama/llama-3.2-3b",
+        "meta-llama/llama-3.1-8b",
+    ]
 
-═══════════════════════════════════════════════════════════════════════
-STRICT NORMALIZATION RULES
-═══════════════════════════════════════════════════════════════════════
+    # Короткий и чёткий системный промпт
+    SYSTEM_PROMPT = """Ты редактор. Преобразуй текст в безличный стиль.
+Удали: приветствия, прощания, "я/мы/мой".
+Сохрани: всю техническую информацию.
+Выведи ТОЛЬКО результат, без комментариев."""
 
-1. REMOVE COMPLETELY:
-   ❌ Greetings: "Hello", "Hi everyone", "Dear readers"
-   ❌ Farewells: "Thanks for reading", "See you", "Looking forward to feedback"
-   ❌ Calls to action: "Subscribe", "Like", "Share"
-   ❌ Questions to reader: "What do you think?", "Have you tried?"
-   ❌ Emoji: remove all emoji
-   ❌ Personal stories: "It happened to me...", "Once I..."
-
-2. REPLACE WITH IMPERSONAL FORMS:
-   
-   Личные местоимения:
-   ❌ "I developed an algorithm..."
-   ✅ "An algorithm was developed..."
-   
-   ❌ "We conducted research..."
-   ✅ "Research showed..."
-   
-   ❌ "I managed to solve the problem..."
-   ✅ "The problem was solved using..."
-   
-   Opinions:
-   ❌ "I think this is important..."
-   ✅ "Analysis shows the importance..."
-   
-   Author actions:
-   ❌ "I wrote code..."
-   ✅ "The code was implemented..."
-   
-   Direct address:
-   ❌ "You can use..."
-   ✅ "It's possible to use..."
-
-3. MUST PRESERVE:
-   ✅ ALL facts, data, numbers
-   ✅ ALL technical terms exactly as in original
-   ✅ ALL code examples (if any)
-   ✅ Structure and logic
-   ✅ Text length (DO NOT shorten!)
-
-═══════════════════════════════════════════════════════════════════════
-КРИТИЧЕСКИ ВАЖНО: PRESERVE FULL TEXT VOLUME!
-═══════════════════════════════════════════════════════════════════════
-
-TEXT TO PROCESS:
-
-{content}
-
-REWRITTEN TEXT (completely, preserving volume):"""
-    
-    def __init__(
-        self,
-        llm_provider: Optional[LLMProvider] = None,
-        config: Optional[ModelsConfig] = None,
-        # Обратная совместимость
-        ollama_client=None,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None
-    ):
-        """Инициализация style normalizer agent."""
-        if ollama_client is not None:
-            logger.warning("ollama_client устарел. Используйте llm_provider.")
-        
-        super().__init__(llm_provider=llm_provider, config=config)
-        
-        # Warn if max_tokens seems low
-        if self._llm.config.max_tokens < 4000:
-            logger.warning(
-                f"max_tokens={self._llm.config.max_tokens} may be insufficient "
-                f"for long articles! Recommended: 8000+"
-            )
-        
-        logger.info(
-            f"StyleNormalizerAgent initialized: model={self.model}, "
-            f"max_tokens={self._llm.config.max_tokens}"
+    def __init__(self, llm_provider=None, config=None, **kwargs):
+        super().__init__(
+            llm_provider=llm_provider,
+            config=config,
+            max_retries=2,  # Меньше попыток - быстрее fallback
+            retry_delay=2.0
         )
-    
-    def normalize_full_text(self, content: str) -> str:
-        """
-        Normalize FULL article text.
-        
-        Аргументы:
-            content: Full article text
-            
-        Возвращает:
-            Нормализованный текст (approximately same length)
-        """
-        result = self.process(content)
+        logger.info(f"[INIT] StyleNormalizerAgent v9.4 (PRODUCTION)")
+
+    def normalize_full_text(self, content: str, url: str = "") -> str:
+        """Нормализовать текст -> plain text."""
+        result = self.normalize_with_details(content, url)
         return result.normalized_text
-    
-    def normalize_with_details(self, content: str) -> NormalizationResult:
-        """
-        Normalize with full analysis details.
-        
-        Аргументы:
-            content: Full article text
-            
-        Возвращает:
-            NormalizationResult with normalized_text, changes, metrics
-        """
-        return self.process(content)
-    
-    def process(self, content: str) -> NormalizationResult:
-        """
-        Main processing method - normalize article style.
-        
-        Аргументы:
-            content: Содержание статьи
-            
-        Возвращает:
-            NormalizationResult
-        """
-        if not content or len(content) < 100:
-            logger.warning("Content too short for normalization")
+
+    def normalize_with_details(self, content: str, url: str = "") -> NormalizationResult:
+        """Нормализовать с метриками."""
+        original_length = len(content)
+
+        if original_length < 100:
             return NormalizationResult(
                 normalized_text=content,
-                changes_made=["Content too short, skipped"],
+                changes_made=["Текст слишком короткий"],
                 length_ratio=1.0
             )
-        
-        original_length = len(content)
-        logger.info(f"Normalizing text: {original_length} chars")
-        
-        prompt = self.NORMALIZATION_PROMPT.format(content=content)
-        
+
+        # Всегда используем chunking для текстов > MAX_CONTENT_LENGTH
+        if original_length > MAX_CONTENT_LENGTH:
+            logger.info(
+                f"[StyleNormalizer] Long text ({original_length} chars), chunking..."
+            )
+            return self._process_with_chunks(content, original_length, url)
+        else:
+            return self._process_single(content, original_length, url)
+
+    def process(self, text: str, url: str = "") -> StyleNormalizationResult:
+        """Основной метод для orchestrator."""
+        import time
+        start_time = time.time()
+
         try:
+            result = self.normalize_with_details(text, url)
+            processing_time = time.time() - start_time
+
+            improvements = []
+            if result.personal_pronouns_removed > 0:
+                improvements.append(f"Удалено {result.personal_pronouns_removed} местоимений")
+            if result.chunks_processed > 1:
+                improvements.append(f"Обработано {result.chunks_processed} частей")
+            if result.used_fallback:
+                improvements.append("Использована базовая очистка")
+            else:
+                improvements.append("Текст нормализован")
+
+            return StyleNormalizationResult(
+                normalized_text=result.normalized_text,
+                original_issues=[],
+                improvements_made=improvements,
+                processing_time=processing_time
+            )
+
+        except Exception as e:
+            processing_time = time.time() - start_time
+            logger.error(f"[StyleNormalizer] Error: {e}")
+
+            # При любой ошибке - fallback
+            cleaned = self._minimal_cleanup(text)
+            return StyleNormalizationResult(
+                normalized_text=cleaned,
+                original_issues=[f"Ошибка: {str(e)[:100]}"],
+                improvements_made=["Базовая очистка"],
+                processing_time=processing_time
+            )
+
+    def _process_single(self, content: str, original_length: int, url: str = "") -> NormalizationResult:
+        """Обработка одного текста."""
+
+        # Для Ollama: max_tokens = примерно столько же сколько на входе
+        # 1 токен ≈ 2-3 символа для русского
+        max_tokens = max(2048, min(8192, original_length // 2 + 1000))
+
+        # Реалистичный минимум: 30% от оригинала
+        min_response = max(ABSOLUTE_MIN_RESPONSE, int(original_length * MIN_RESPONSE_RATIO))
+
+        prompt = self._build_prompt(content)
+
+        logger.info(
+            f"[StyleNormalizer] Processing {original_length} chars, "
+            f"max_tokens={max_tokens}, min={min_response}"
+        )
+
+        try:
+            # Используем BaseAgent.generate() с retry
             normalized = self.generate(
                 prompt=prompt,
-                system_prompt=self.SYSTEM_PROMPT
+                system_prompt=self.SYSTEM_PROMPT,
+                max_tokens=max_tokens,
+                temperature=0.2,  # Очень низкая для консистентности
+                min_response_length=min_response
             )
-            
-            normalized = normalized.strip()
-            
-            # Валидация result
-            result_length = len(normalized)
-            ratio = result_length / original_length if original_length > 0 else 0
-            
-            logger.info(
-                f"Normalization complete: {original_length} → {result_length} chars "
-                f"(ratio: {ratio:.2f})"
-            )
-            
-            # Quality checks
-            if result_length < 100:
-                logger.error("Нормализованный текст too short! Returning original")
-                return NormalizationResult(
-                    normalized_text=content,
-                    changes_made=["Normalization failed - result too short"],
-                    length_ratio=1.0
+
+            # Очистка
+            cleaned = self._clean_result(normalized)
+
+            # Проверка качества
+            if len(cleaned) < min_response:
+                logger.warning(
+                    f"[StyleNormalizer] Short result ({len(cleaned)}<{min_response}), fallback"
                 )
-            
-            if ratio < 0.5:
-                logger.warning(f"Text significantly shortened! ratio={ratio:.2f}")
-            
-            if ratio > 1.5:
-                logger.warning(f"Text significantly expanded! ratio={ratio:.2f}")
-            
-            # Count removed pronouns
-            pronouns_removed = self._count_pronouns_diff(content, normalized)
-            
-            return NormalizationResult(
-                normalized_text=normalized,
-                changes_made=["Личные местоимения replaced", "Objective style applied"],
-                personal_pronouns_removed=pronouns_removed,
-                length_ratio=ratio
+                cleaned = self._minimal_cleanup(content)
+                return NormalizationResult(
+                    normalized_text=cleaned,
+                    changes_made=["Fallback: short response"],
+                    length_ratio=len(cleaned) / original_length,
+                    used_fallback=True
+                )
+
+            pronouns = self._count_pronouns_diff(content, cleaned)
+
+            logger.info(
+                f"[StyleNormalizer] OK: {original_length} -> {len(cleaned)} "
+                f"(ratio={len(cleaned) / original_length:.1%})"
             )
-            
-        except Exception as e:
-            logger.error(f"Normalization failed: {e}", exc_info=True)
+
             return NormalizationResult(
-                normalized_text=content,
-                changes_made=[f"Ошибка: {str(e)}"],
-                length_ratio=1.0
+                normalized_text=cleaned,
+                changes_made=["Нормализация"],
+                personal_pronouns_removed=pronouns,
+                length_ratio=len(cleaned) / original_length
             )
-    
-    def normalize_intro(self, content: str) -> str:
-        """
-        Normalize only the introduction (faster processing).
-        
-        Аргументы:
-            content: Full text
-            
-        Возвращает:
-            Text with normalized introduction
-        """
-        intro_length = min(1500, len(content))
-        intro = content[:intro_length]
-        
-        prompt = f"""Rewrite this article introduction, removing personal references.
 
-REMOVE: "Hello", "I [do something]", "Want to tell", "Looking forward to"
-REPLACE with impersonal forms.
-
-ORIGINAL:
-{intro}
-
-RESULT:"""
-        
-        try:
-            response = self.generate(prompt=prompt, max_tokens=1000)
-            normalized_intro = response.strip()
-            
-            if len(normalized_intro) < 50:
-                return content
-            
-            if len(content) > intro_length:
-                return normalized_intro + "\n\n" + content[intro_length:]
-            return normalized_intro
-                
         except Exception as e:
-            logger.error(f"Intro normalization failed: {e}")
-            return content
-    
+            logger.warning(f"[StyleNormalizer] LLM failed: {e}, using fallback")
+            cleaned = self._minimal_cleanup(content)
+            return NormalizationResult(
+                normalized_text=cleaned,
+                changes_made=[f"Fallback: {type(e).__name__}"],
+                length_ratio=len(cleaned) / original_length,
+                used_fallback=True
+            )
+
+    def _process_with_chunks(self, content: str, original_length: int, url: str = "") -> NormalizationResult:
+        """Обработка длинного текста по частям."""
+        chunks = self._split_into_chunks(content)
+        logger.info(f"[StyleNormalizer] Split into {len(chunks)} chunks")
+
+        normalized_chunks = []
+        total_pronouns = 0
+        any_fallback = False
+
+        for i, chunk in enumerate(chunks):
+            chunk_len = len(chunk)
+            logger.info(f"[StyleNormalizer] Chunk {i + 1}/{len(chunks)} ({chunk_len} chars)")
+
+            try:
+                result = self._process_single(chunk, chunk_len, "")
+                normalized_chunks.append(result.normalized_text)
+                total_pronouns += result.personal_pronouns_removed
+                if result.used_fallback:
+                    any_fallback = True
+            except Exception as e:
+                logger.warning(f"[StyleNormalizer] Chunk {i + 1} error: {e}")
+                normalized_chunks.append(self._minimal_cleanup(chunk))
+                any_fallback = True
+
+        # Собираем результат
+        normalized = "\n\n".join(normalized_chunks)
+        ratio = len(normalized) / original_length if original_length > 0 else 1.0
+
+        logger.info(
+            f"[StyleNormalizer] Done: {original_length} -> {len(normalized)} "
+            f"({len(chunks)} chunks, fallback={any_fallback})"
+        )
+
+        return NormalizationResult(
+            normalized_text=normalized,
+            changes_made=[f"{len(chunks)} chunks"],
+            personal_pronouns_removed=total_pronouns,
+            length_ratio=ratio,
+            chunks_processed=len(chunks),
+            used_fallback=any_fallback
+        )
+
+    def _build_prompt(self, content: str) -> str:
+        """Промпт для нормализации - короткий и чёткий."""
+        return f"""Преобразуй текст в редакционный стиль:
+
+1. Удали "Привет", "Всем привет", "Спасибо за внимание"
+2. Замени "я сделал" → "было сделано"  
+3. Замени "мы решили" → "было решено"
+4. Сохрани всю техническую информацию
+
+ТЕКСТ:
+{content}
+
+РЕЗУЛЬТАТ:"""
+
+    def _split_into_chunks(self, content: str) -> List[str]:
+        """Разбить на чанки по абзацам."""
+        paragraphs = content.split('\n\n')
+        chunks = []
+        current = ""
+
+        for para in paragraphs:
+            para = para.strip()
+            if not para:
+                continue
+
+            # Если добавление параграфа превысит лимит
+            if len(current) + len(para) + 2 > MAX_CHUNK_SIZE:
+                if current:
+                    chunks.append(current.strip())
+                current = para
+            else:
+                current = current + "\n\n" + para if current else para
+
+        if current:
+            chunks.append(current.strip())
+
+        # Если получился один большой чанк - разбиваем по предложениям
+        if len(chunks) == 1 and len(chunks[0]) > MAX_CHUNK_SIZE:
+            chunks = self._split_by_sentences(chunks[0])
+
+        # Если чанков нет - вернуть весь текст как один
+        if not chunks:
+            chunks = [content]
+
+        return chunks
+
+    def _split_by_sentences(self, content: str) -> List[str]:
+        """Разбить по предложениям."""
+        # Разбиваем по точке/восклицательному/вопросительному + пробел
+        sentences = re.split(r'(?<=[.!?])\s+', content)
+        chunks = []
+        current = ""
+
+        for sent in sentences:
+            if len(current) + len(sent) + 1 > MAX_CHUNK_SIZE:
+                if current:
+                    chunks.append(current.strip())
+                current = sent
+            else:
+                current = current + " " + sent if current else sent
+
+        if current:
+            chunks.append(current.strip())
+
+        return chunks if chunks else [content]
+
+    def _clean_result(self, text: str) -> str:
+        """Очистка от артефактов LLM."""
+        if not text:
+            return ""
+
+        result = text.strip()
+
+        # Убираем markdown
+        result = re.sub(r'^```[\w]*\n?', '', result)
+        result = re.sub(r'\n?```$', '', result)
+
+        # Убираем префиксы LLM
+        prefixes = [
+            r'^(?:Вот\s+)?(?:преобразованный|нормализованный|результат)[:\s]*\n*',
+            r'^РЕЗУЛЬТАТ[:\s]*\n*',
+            r'^Редакционный\s+(?:вариант|текст)[:\s]*\n*',
+        ]
+        for p in prefixes:
+            result = re.sub(p, '', result, flags=re.IGNORECASE)
+
+        # Убираем markdown разметку
+        result = re.sub(r'\*\*([^*]+)\*\*', r'\1', result)
+        result = re.sub(r'\*([^*]+)\*', r'\1', result)
+        result = re.sub(r'__([^_]+)__', r'\1', result)
+        result = re.sub(r'_([^_]+)_', r'\1', result)
+
+        return result.strip()
+
+    def _minimal_cleanup(self, content: str) -> str:
+        """Минимальная очистка без LLM - всегда работает."""
+        text = content
+
+        # Приветствия в начале
+        greetings = [
+            r'^\s*Привет[,!]?\s*(?:Хабр|всем)?[,!.]?\s*\n*',
+            r'^\s*Всем\s+привет[,!.]?\s*\n*',
+            r'^\s*Добрый\s+день[,!.]?\s*\n*',
+            r'^\s*Здравствуйте[,!.]?\s*\n*',
+            r'^\s*Приветствую[,!.]?\s*\n*',
+        ]
+        for pattern in greetings:
+            text = re.sub(pattern, '', text, flags=re.IGNORECASE | re.MULTILINE)
+
+        # Прощания в конце
+        farewells = [
+            r'\n*Спасибо\s+за\s+(?:внимание|прочтение)[,!.]*\s*$',
+            r'\n*Подписывайтесь[^.]*[,!.]*\s*$',
+            r'\n*Пишите\s+в\s+комментариях[^.]*[,!.]*\s*$',
+            r'\n*Буду\s+рад\s+(?:вашим\s+)?комментариям[^.]*[,!.]*\s*$',
+            r'\n*Жду\s+ваших?\s+(?:комментари|отзыв)[^.]*[,!.]*\s*$',
+        ]
+        for pattern in farewells:
+            text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+
+        return text.strip()
+
     def _count_pronouns_diff(self, original: str, normalized: str) -> int:
-        """Count approximate difference in personal pronouns."""
+        """Подсчёт удалённых местоимений."""
         patterns = [
             r'\bя\b', r'\bмы\b', r'\bмой\b', r'\bмоя\b', r'\bмоё\b', r'\bмои\b',
             r'\bнаш\b', r'\bнаша\b', r'\bнаше\b', r'\bнаши\b',
             r'\bмне\b', r'\bнам\b', r'\bменя\b', r'\bнас\b',
-            r'\bI\b', r'\bwe\b', r'\bmy\b', r'\bour\b', r'\bme\b', r'\bus\b',
         ]
-        
-        def count_pronouns(text: str) -> int:
-            count = 0
+
+        def count(text: str) -> int:
+            total = 0
             text_lower = text.lower()
-            for pattern in patterns:
-                count += len(re.findall(pattern, text_lower, re.IGNORECASE))
-            return count
-        
-        original_count = count_pronouns(original)
-        normalized_count = count_pronouns(normalized)
-        
-        return max(0, original_count - normalized_count)
-    
-    def validate_normalization(self, original: str, normalized: str) -> dict:
-        """
-        Валидация normalization quality.
-        
-        Аргументы:
-            original: Оригинальный текст
-            normalized: Нормализованный текст
-            
-        Возвращает:
-            Validation results dict
-        """
-        original_len = len(original)
-        normalized_len = len(normalized)
-        ratio = normalized_len / original_len if original_len > 0 else 0
-        
-        patterns = [r'\bя\b', r'\bмы\b', r'\bмой\b', r'\bнаш\b',
-                    r'\bI\b', r'\bwe\b', r'\bmy\b', r'\bour\b']
-        
-        remaining_pronouns = 0
-        normalized_lower = normalized.lower()
-        for pattern in patterns:
-            remaining_pronouns += len(re.findall(pattern, normalized_lower))
-        
-        is_valid = (ratio >= 0.7 and ratio <= 1.3 and remaining_pronouns <= 5)
-        
-        issues = []
-        if ratio < 0.7:
-            issues.append(f"Text shortened (ratio: {ratio:.2f})")
-        if ratio > 1.3:
-            issues.append(f"Text expanded (ratio: {ratio:.2f})")
-        if remaining_pronouns > 5:
-            issues.append(f"Pronouns remain ({remaining_pronouns})")
-        
-        return {
-            "is_valid": is_valid,
-            "length_ratio": ratio,
-            "original_length": original_len,
-            "normalized_length": normalized_len,
-            "remaining_pronouns": remaining_pronouns,
-            "issues": issues
-        }
+            for p in patterns:
+                total += len(re.findall(p, text_lower))
+            return total
+
+        return max(0, count(original) - count(normalized))

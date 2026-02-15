@@ -3,21 +3,15 @@
 # Путь: src/application/ai_services/agents/quality_validator_agent.py
 # =============================================================================
 """
-Агент валидации качества обработки текста.
-
-Версия 2.0 - Смягчённые правила для технических статей:
-- Местоимения допустимы (авторский стиль)
-- Допустимое изменение длины: 0.3x - 2.5x
-- Фокус на сохранении смысла, а не формы
+Агент валидации качества v8.0
 """
 
 import logging
 import re
 from typing import Optional
 from dataclasses import dataclass, field
-from pydantic import BaseModel, Field
 
-from src.application.ai_services.agents.base_agent import BaseAgent
+from src.application.ai_services.agents.base_agent import BaseAgent, TaskType
 from src.infrastructure.ai.llm_provider import LLMProvider
 from src.config.models_config import ModelsConfig
 
@@ -35,95 +29,103 @@ class ValidationResult:
 
 
 class QualityValidatorAgent(BaseAgent):
-    """
-    Агент валидации качества нормализации.
-
-    Смягчённые правила v2.0:
-    - Местоимения НЕ являются ошибкой (авторский стиль допустим)
-    - Длина может меняться от 30% до 250% от оригинала
-    - Основной критерий: текст не пустой и не обрезан критически
-    """
+    """Агент валидации качества нормализации."""
 
     agent_name = "quality_validator"
+    task_type = TaskType.LIGHT
 
-    # Критические паттерны (реальные проблемы)
+    # Критические паттерны
     CRITICAL_PATTERNS = [
-        r'(?i)\[.*?(пропущено|truncated|cut off|incomplete).*?\]',  # Явные маркеры обрезки
-        r'(?i)^.{0,50}$',  # Слишком короткий результат (< 50 символов)
+        r'(?i)\[.*?(пропущено|truncated|cut off|incomplete).*?\]',
+        r'(?i)^.{0,50}$',
     ]
 
-    def __init__(self, llm_provider=None, config=None, ollama_client=None, **kwargs):
-        if ollama_client:
-            logger.warning("ollama_client deprecated")
+    # Артефакты LLM
+    LLM_ARTIFACTS = [
+        r'^Вот переписанный текст:',
+        r'^Результат:',
+        r'^Here is the',
+        r'^```',
+    ]
+
+    def __init__(self, llm_provider=None, config=None, **kwargs):
         super().__init__(llm_provider=llm_provider, config=config)
+        logger.info(f"[INIT] QualityValidatorAgent v8")
 
     def validate(self, original: str, normalized: str, check_ai: bool = False) -> ValidationResult:
         """Валидировать качество."""
         return self.process(original, normalized, check_ai)
 
     def process(self, original: str, normalized: str, check_ai: bool = False) -> ValidationResult:
-        """
-        Главный метод валидации.
+        """Главный метод валидации."""
+        issues = []
+        warnings = []
+        metrics = {}
 
-        Смягчённая логика:
-        - issues = критические проблемы (текст обрезан, пустой)
-        - warnings = некритичные замечания (информативно)
-        - is_valid = True если нет критических проблем
-        """
-        issues, warnings, metrics = [], [], {}
-
-        # Базовые проверки
         orig_len = len(original)
         norm_len = len(normalized)
+        
+        metrics['original_length'] = orig_len
+        metrics['normalized_length'] = norm_len
 
-        # Пустой или почти пустой результат - критическая ошибка
+        # Пустой результат
         if norm_len < 50:
             issues.append(f"Результат слишком короткий: {norm_len} символов")
-            return ValidationResult(is_valid=False, score=0.0, issues=issues, warnings=warnings, metrics=metrics)
+            return ValidationResult(
+                is_valid=False, 
+                score=0.0, 
+                issues=issues, 
+                warnings=warnings, 
+                metrics=metrics
+            )
 
         # Соотношение длин
         ratio = norm_len / orig_len if orig_len > 0 else 0
         metrics['length_ratio'] = round(ratio, 2)
-        metrics['original_length'] = orig_len
-        metrics['normalized_length'] = norm_len
 
-        # Критическое сокращение (меньше 30% от оригинала) - issue
+        # Критическое сокращение (< 30%)
         if ratio < 0.3:
-            issues.append(f"Текст критически сокращён: {orig_len} → {norm_len} (ratio: {ratio:.2f})")
-        # Сильное сокращение (30-50%) - только warning
+            issues.append(f"Критическое сокращение: {orig_len} -> {norm_len} (ratio: {ratio:.2f})")
         elif ratio < 0.5:
-            warnings.append(f"Текст значительно сокращён: ratio={ratio:.2f}")
+            warnings.append(f"Значительное сокращение: ratio={ratio:.2f}")
 
-        # Критическое расширение (больше 3x) - issue
+        # Критическое расширение (> 3x)
         if ratio > 3.0:
-            issues.append(f"Текст критически расширен: {orig_len} → {norm_len} (ratio: {ratio:.2f})")
-        # Сильное расширение (2.5-3x) - только warning
+            issues.append(f"Критическое расширение: {orig_len} -> {norm_len} (ratio: {ratio:.2f})")
         elif ratio > 2.5:
-            warnings.append(f"Текст значительно расширен: ratio={ratio:.2f}")
+            warnings.append(f"Значительное расширение: ratio={ratio:.2f}")
 
-        # Проверка на маркеры обрезки
+        # Маркеры обрезки
         for pattern in self.CRITICAL_PATTERNS:
             if re.search(pattern, normalized):
                 issues.append("Обнаружены маркеры неполного текста")
                 break
 
-        # Расчёт оценки
-        # Начинаем с 1.0, вычитаем за проблемы
-        score = 1.0
-        score -= len(issues) * 0.4  # Критические проблемы сильно снижают
-        score -= len(warnings) * 0.1  # Warnings слабо влияют
+        # Артефакты LLM
+        for pattern in self.LLM_ARTIFACTS:
+            if re.search(pattern, normalized, re.IGNORECASE):
+                warnings.append("Обнаружены артефакты LLM")
+                break
 
-        # Бонус за хорошее соотношение длин (0.7 - 1.5 идеально)
+        # Оценка
+        score = 1.0
+        score -= len(issues) * 0.4
+        score -= len(warnings) * 0.1
+
         if 0.7 <= ratio <= 1.5:
             score += 0.1
 
         score = max(0.0, min(1.0, score))
         metrics['score'] = round(score, 2)
 
-        # Валидно если нет критических issues
         is_valid = len(issues) == 0
 
-        result = ValidationResult(
+        logger.info(
+            f"[Validator] valid={is_valid}, score={score:.2f}, "
+            f"issues={len(issues)}, warnings={len(warnings)}"
+        )
+
+        return ValidationResult(
             is_valid=is_valid,
             score=score,
             issues=issues,
@@ -131,7 +133,16 @@ class QualityValidatorAgent(BaseAgent):
             metrics=metrics
         )
 
-        logger.info(
-            f"Результат валидации: valid={is_valid}, score={score:.2f}, issues={len(issues)}, warnings={len(warnings)}")
-
-        return result
+    def quick_check(self, original: str, normalized: str) -> bool:
+        """Быстрая проверка."""
+        if len(normalized) < 50:
+            return False
+        
+        if len(original) > 0 and len(normalized) / len(original) < 0.3:
+            return False
+        
+        for pattern in self.CRITICAL_PATTERNS:
+            if re.search(pattern, normalized):
+                return False
+        
+        return True

@@ -3,16 +3,18 @@
 # Путь: src/application/ai_services/agents/classifier_agent.py
 # =============================================================================
 """
-Агент классификации контента: НОВОСТЬ или СТАТЬЯ.
+Агент классификации контента v8.0
 
-Использует структурированный вывод для точной классификации.
+Изменения v8:
+- Улучшенная обработка ошибок
+- Исключение проблемных моделей
 """
 
 import logging
 from typing import Optional
 from pydantic import BaseModel, Field
 
-from src.application.ai_services.agents.base_agent import BaseAgent
+from src.application.ai_services.agents.base_agent import BaseAgent, TaskType
 from src.infrastructure.ai.llm_provider import LLMProvider
 from src.config.models_config import ModelsConfig
 
@@ -20,130 +22,63 @@ logger = logging.getLogger(__name__)
 
 
 class ClassificationResult(BaseModel):
-    """Структурированный результат классификации."""
+    """Результат классификации."""
     
-    is_news: bool = Field(
-        description="True если НОВОСТЬ, False если СТАТЬЯ"
-    )
-    confidence: float = Field(
-        ge=0.0, le=1.0,
-        description="Уверенность в классификации (0.0-1.0)"
-    )
-    reasoning: str = Field(
-        description="Краткое обоснование решения"
-    )
+    is_news: bool = Field(description="True если НОВОСТЬ, False если СТАТЬЯ")
+    confidence: float = Field(ge=0.0, le=1.0, description="Уверенность 0.0-1.0")
+    reasoning: str = Field(description="Обоснование")
 
 
 class ClassifierAgent(BaseAgent):
-    """
-    Агент классификации: НОВОСТЬ или СТАТЬЯ.
-    
-    НОВОСТЬ - характеристики:
-    - Сообщает о конкретном недавнем событии
-    - Содержит даты и актуальную информацию
-    - Анонсирует релиз, конференцию, исследование
-    - Короткий, фактологичный (обычно < 3000 символов)
-    - Фокус на ЧТО ПРОИЗОШЛО
-    
-    СТАТЬЯ - характеристики:
-    - Подробный разбор, туториал, гайд
-    - Личный опыт, кейс-стади
-    - Длинный и детальный (> 3000 символов)
-    - Фокус на КАК ЭТО РАБОТАЕТ
-    
-    Пример:
-        >>> agent = ClassifierAgent()
-        >>> is_news = agent.classify("Вышел Python 3.13", "Новая версия...")
-        >>> print(is_news)  # True
-    """
+    """Агент классификации: НОВОСТЬ или СТАТЬЯ."""
     
     agent_name = "classifier"
+    task_type = TaskType.LIGHT
+    MIN_RESPONSE_LENGTH = 5
     
-    SYSTEM_PROMPT = """Ты классификатор контента для технического новостного агрегатора.
-Твоя задача - определить, является ли контент НОВОСТЬЮ или СТАТЬЁЙ.
-
-Будь точным и последовательным в классификации."""
+    EXCLUDED_MODELS = [
+        "openai/gpt-oss-120b:free",
+    ]
     
-    CLASSIFICATION_PROMPT = """Проанализируй контент и классифицируй его как НОВОСТЬ или СТАТЬЯ.
+    SYSTEM_PROMPT = """Ты - классификатор контента для технического портала.
+Определяй тип: НОВОСТЬ или СТАТЬЯ.
+Отвечай на русском."""
 
-КРИТЕРИИ КЛАССИФИКАЦИИ:
+    CLASSIFICATION_PROMPT = """Классифицируй контент как НОВОСТЬ или СТАТЬЯ.
 
-НОВОСТЬ - если контент:
-✓ Сообщает о конкретном недавнем событии
-✓ Содержит актуальную информацию с датами
-✓ Анонсирует релиз, конференцию, публикацию исследования
-✓ Короткий и фактологичный (обычно < 3000 символов)
-✓ Фокус на ЧТО ПРОИЗОШЛО, а не КАК СДЕЛАТЬ
-✓ Примеры: "Вышел Python 3.13", "OpenAI анонсировала GPT-5", "Обнаружена критическая уязвимость"
+НОВОСТЬ:
+- Сообщает о конкретном недавнем событии
+- Анонс релиза, конференции, исследования
+- Короткий формат (< 3000 символов)
+- Фокус: ЧТО ПРОИЗОШЛО
 
-СТАТЬЯ - если контент:
-✓ Подробный разбор темы, туториал, руководство
-✓ Личный опыт, кейс-стади, обзор решения
-✓ Длинный и детальный (> 3000 символов)
-✓ Глубокий анализ без привязки к конкретному событию
-✓ Фокус на КАК ЭТО РАБОТАЕТ или КАК ЭТО СДЕЛАТЬ
-✓ Примеры: "Как настроить Docker", "Миграция на микросервисы", "Обзор архитектуры"
+СТАТЬЯ:
+- Подробный разбор, туториал
+- Личный опыт, кейс-стади
+- Длинный формат (> 3000 символов)
+- Фокус: КАК СДЕЛАТЬ
 
-КОНТЕНТ ДЛЯ АНАЛИЗА:
 Заголовок: {title}
 
-Текст (первые 800 символов): {content}
+Текст (800 символов): {content}
 
-Классифицируй контент и объясни своё решение."""
+Классифицируй и объясни."""
     
     def __init__(
         self,
         llm_provider: Optional[LLMProvider] = None,
         config: Optional[ModelsConfig] = None,
-        ollama_client=None,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None
+        **kwargs
     ):
-        """
-        Инициализация агента классификации.
-        
-        Аргументы:
-            llm_provider: LLM провайдер (рекомендуется)
-            config: Конфигурация моделей
-            ollama_client: Устаревший параметр, для обратной совместимости
-            model: Игнорируется, используется конфигурация
-            temperature: Игнорируется, используется конфигурация
-            max_tokens: Игнорируется, используется конфигурация
-        """
-        if ollama_client is not None:
-            logger.warning(
-                "Параметр ollama_client устарел. "
-                "Используйте llm_provider или config."
-            )
-        
         super().__init__(llm_provider=llm_provider, config=config)
-        logger.info(f"ClassifierAgent инициализирован с моделью: {self.model}")
+        logger.info(f"[INIT] ClassifierAgent v8: model={self.model}")
     
     def classify(self, title: str, content: str) -> bool:
-        """
-        Классифицировать контент как НОВОСТЬ или СТАТЬЯ.
-        
-        Аргументы:
-            title: Заголовок
-            content: Текст контента
-            
-        Возвращает:
-            True если НОВОСТЬ, False если СТАТЬЯ
-        """
+        """Классифицировать -> True=НОВОСТЬ, False=СТАТЬЯ."""
         return self.process(title, content)
     
     def classify_with_details(self, title: str, content: str) -> ClassificationResult:
-        """
-        Классифицировать с полными деталями.
-        
-        Аргументы:
-            title: Заголовок
-            content: Текст контента
-            
-        Возвращает:
-            ClassificationResult с is_news, confidence, reasoning
-        """
+        """Классифицировать с деталями."""
         prompt = self.CLASSIFICATION_PROMPT.format(
             title=title,
             content=content[:800]
@@ -157,51 +92,32 @@ class ClassifierAgent(BaseAgent):
             )
             
             logger.info(
-                f"Классификация: {'НОВОСТЬ' if result.is_news else 'СТАТЬЯ'} "
-                f"(уверенность: {result.confidence:.2f})"
+                f"[Classifier] {'НОВОСТЬ' if result.is_news else 'СТАТЬЯ'} "
+                f"(confidence: {result.confidence:.0%})"
             )
-            
             return result
             
         except Exception as e:
-            logger.error(f"Структурированная классификация не удалась: {e}")
+            logger.error(f"[Classifier] Structured failed: {e}")
             is_news = self._classify_simple(title, content)
             return ClassificationResult(
                 is_news=is_news,
                 confidence=0.5,
-                reasoning="Fallback классификация из-за ошибки парсинга"
+                reasoning="Fallback классификация"
             )
     
     def process(self, title: str, content: str) -> bool:
-        """
-        Главный метод обработки - классификация контента.
-        
-        Аргументы:
-            title: Заголовок
-            content: Текст контента
-            
-        Возвращает:
-            True если НОВОСТЬ, False если СТАТЬЯ
-        """
+        """Главный метод."""
         try:
             result = self.classify_with_details(title, content)
             return result.is_news
         except Exception as e:
-            logger.error(f"Классификация не удалась: {e}", exc_info=True)
+            logger.error(f"[Classifier] Error: {e}")
             return self._classify_simple(title, content)
     
     def _classify_simple(self, title: str, content: str) -> bool:
-        """
-        Простая fallback классификация без структурированного вывода.
-        
-        Аргументы:
-            title: Заголовок
-            content: Текст контента
-            
-        Возвращает:
-            True если НОВОСТЬ, False если СТАТЬЯ
-        """
-        prompt = f"""Классифицируй контент. Ответь ТОЛЬКО одним словом: НОВОСТЬ или СТАТЬЯ
+        """Простая fallback классификация."""
+        prompt = f"""Классифицируй. Ответь ОДНИМ словом: НОВОСТЬ или СТАТЬЯ
 
 Заголовок: {title}
 Текст: {content[:600]}
@@ -211,44 +127,32 @@ class ClassifierAgent(BaseAgent):
         try:
             response = self.generate(
                 prompt=prompt,
-                system_prompt="Отвечай ровно одним словом: НОВОСТЬ или СТАТЬЯ",
-                max_tokens=10
+                system_prompt="Отвечай одним словом: НОВОСТЬ или СТАТЬЯ",
+                max_tokens=10,
+                min_response_length=3
             )
             
             response_upper = response.upper().strip()
             is_news = "НОВОСТЬ" in response_upper or "NEWS" in response_upper
             
-            logger.info(f"Простая классификация: {'НОВОСТЬ' if is_news else 'СТАТЬЯ'}")
+            logger.info(f"[Classifier] Simple: {'НОВОСТЬ' if is_news else 'СТАТЬЯ'}")
             return is_news
             
         except Exception as e:
-            logger.error(f"Простая классификация не удалась: {e}")
-            # Крайний fallback: считаем СТАТЬЁЙ (безопаснее)
-            return False
+            logger.error(f"[Classifier] Simple failed: {e}")
+            return False  # Default: СТАТЬЯ
     
-    def batch_classify(
-        self,
-        элементов: list[tuple[str, str]]
-    ) -> list[ClassificationResult]:
-        """
-        Классифицировать несколько элементов.
-        
-        Аргументы:
-            элементов: Список кортежей (title, content)
-            
-        Возвращает:
-            Список ClassificationResult
-        """
+    def batch_classify(self, items: list[tuple[str, str]]) -> list[ClassificationResult]:
+        """Batch классификация."""
         results = []
-        for title, content in элементов:
+        for title, content in items:
             try:
                 result = self.classify_with_details(title, content)
                 results.append(result)
             except Exception as e:
-                logger.error(f"Ошибка batch классификации для '{title[:30]}': {e}")
                 results.append(ClassificationResult(
                     is_news=False,
                     confidence=0.0,
-                    reasoning=f"Ошибка: {str(e)}"
+                    reasoning=f"Error: {e}"
                 ))
         return results

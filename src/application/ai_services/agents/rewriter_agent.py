@@ -3,16 +3,15 @@
 # Путь: src/application/ai_services/agents/rewriter_agent.py
 # =============================================================================
 """
-Enhanced Title Rewriter Agent with LangChain.
-
-Improves article titles for professional tech audience.
+Агент переписывания заголовков v9.2
 """
 
 import logging
-from typing import Optional
+import re
+from typing import Optional, Dict, Any
 from pydantic import BaseModel, Field, field_validator
 
-from src.application.ai_services.agents.base_agent import BaseAgent
+from src.application.ai_services.agents.base_agent import BaseAgent, TaskType
 from src.infrastructure.ai.llm_provider import LLMProvider
 from src.config.models_config import ModelsConfig
 
@@ -20,318 +19,222 @@ logger = logging.getLogger(__name__)
 
 
 class TitleResult(BaseModel):
-    """Structured output for title rewriting."""
-    
-    improved_title: str = Field(
-        description="Improved title (40-80 символов)"
-    )
-    original_issues: list[str] = Field(
-        default_factory=list,
-        description="Issues found in original title"
-    )
-    improvements_made: list[str] = Field(
-        default_factory=list,
-        description="Improvements applied"
-    )
-    
+    """Результат переписывания."""
+    improved_title: str = Field(description="Улучшенный заголовок")
+    original_issues: list[str] = Field(default_factory=list)
+    improvements_made: list[str] = Field(default_factory=list)
+
+    # Добавляем дополнительные поля для совместимости с orchestrator
+    reasoning: Optional[str] = Field(default=None, description="Объяснение изменений")
+    original_length: Optional[int] = Field(default=None, description="Длина оригинального заголовка")
+    new_length: Optional[int] = Field(default=None, description="Длина нового заголовка")
+
     @field_validator('improved_title')
     @classmethod
     def validate_title(cls, v: str) -> str:
-        """Clean and validate improved title."""
-        # Remove quotes
         v = v.strip().strip('"').strip("'").strip('`')
-        # Remove trailing period
         if v.endswith('.'):
             v = v[:-1]
-        # Remove exclamation marks
-        v = v.replace('!', '')
-        # Remove markdown
-        v = v.replace('**', '').replace('*', '')
+        v = v.replace('!', '').replace('**', '').replace('*', '')
         return v
 
 
 class RewriterAgent(BaseAgent):
-    """
-    Агент для improving article titles.
-    
-    Title requirements:
-    - Length: 40-80 символов
-    - Информацияrmative and specific
-    - Professional tone
-    - NO clickbait
-    - NO exclamation marks
-    - NO questions
-    - NO "Top-5", "10 ways"
-    - NO "How I...", "My story..."
-    - NO emoji
-    
-    Пример:
-        >>> agent = RewriterAgent()
-        >>> title = agent.rewrite_title("How I wrote my framework!!!", "...")
-        >>> print(title)  # "Building a Custom Framework: Experience and Solutions"
-    """
-    
+    """Агент улучшения заголовков v9.2"""
+
     agent_name = "rewriter"
-    
-    SYSTEM_PROMPT = """You are a professional tech editor.
-Improve article titles to be informative, professional, and engaging.
+    task_type = TaskType.MEDIUM
+    MIN_RESPONSE_LENGTH = 15
 
-Rules:
-- Keep titles 40-80 символов
-- Be specific and informative
-- No clickbait or sensationalism
-- No personal pronouns focus
-- No exclamation marks"""
-    
-    REWRITE_PROMPT = """Improve this article title to be more professional and informative.
+    # Исключенные модели - возвращают пустые ответы
+    EXCLUDED_MODELS = [
+        "nvidia/nemotron-3-nano-30b-a3b:free",
+        "nvidia/nemotron",
+        "meta-llama/llama-3.2-3b",
+        "meta-llama/llama-3.1-8b",
+        "openai/gpt-oss-120b:free",
+        "google/gemma-2-9b-it:free",
+    ]
 
-TITLE REQUIREMENTS:
+    SYSTEM_PROMPT = """Ты - редактор. Улучшай заголовки: информативно и профессионально.
+Сохраняй язык. Отвечай ТОЛЬКО заголовком, без пояснений."""
 
-LENGTH:
-- 40-80 символов (strict!)
-- Not shorter than 40 символов
-- Not longer than 80 символов
+    REWRITE_PROMPT = """Улучши заголовок.
 
-CONTENT:
-- Информацияrmative and specific
-- Clearly reflects article essence
-- Focus on CONTENT, not on author
+ПРАВИЛА:
+- 40-80 символов
+- Информативный
+- БЕЗ "Как я...", "Мой опыт..."
+- БЕЗ восклицаний
 
-STYLE:
-- Professional tone
-- NO clickbait ("incredible", "shocking")
-- NO exclamation marks (!!!)
-- NO questions
-- NO "Top-5", "10 ways"
-- NO "How I...", "My story..."
-- NO emoji (they're added separately)
+ОРИГИНАЛ: {title}
 
-FORMAT:
-- Plain text
-- NO quotes
-- NO period at the end
+Напиши ТОЛЬКО новый заголовок:"""
 
-TRANSFORMATIONS:
-
-❌ BAD → ✅ GOOD:
-
-"How I wrote my framework in a week"
-→ "Building a Custom Framework: Experience and Solutions"
-
-"My Linux journey after 10 years on Windows"
-→ "Windows to Linux Migration: Practical Experience"
-
-"I learned Docker and here's what happened!!!"
-→ "Docker in Production: First Steps and Lessons"
-
-"Incredible! GPT-5 amazed everyone!"
-→ "GPT-5: New Capabilities and Improvements"
-
-"Top-5 Python 3.13 features that will blow your mind 🔥"
-→ "Python 3.13: Key New Features"
-
-EXCELLENT TITLE EXAMPLES:
-✅ "OpenAI Introduces GPT-5 with Enhanced Reasoning"
-✅ "Python 3.13 Gains 40% Speed with JIT Compiler"
-✅ "New Compression Algorithm Outperforms JPEG by 35%"
-✅ "Kubernetes 1.30: What's New in Container Management"
-✅ "Monolith to Microservices: A Team's Migration Story"
-
-ORIGINAL TITLE: {title}
-
-ARTICLE CONTEXT (first 400 chars): {content}
-
-Rewrite the title following all requirements."""
-    
     def __init__(
-        self,
-        llm_provider: Optional[LLMProvider] = None,
-        config: Optional[ModelsConfig] = None,
-        # Обратная совместимость
-        ollama_client=None,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None
+            self,
+            llm_provider: Optional[LLMProvider] = None,
+            config: Optional[ModelsConfig] = None,
+            **kwargs
     ):
-        """Инициализация rewriter agent."""
-        if ollama_client is not None:
-            logger.warning("ollama_client устарел. Используйте llm_provider.")
-        
-        super().__init__(llm_provider=llm_provider, config=config)
-        logger.info(f"RewriterAgent инициализирован с моделью: {self.model}")
-    
-    def rewrite_title(self, title: str, content: str) -> str:
-        """
-        Improve article title.
-        
-        Аргументы:
-            title: Original title
-            content: Содержание статьи (for context)
-            
-        Возвращает:
-            Improved title (40-80 символов)
-        """
+        super().__init__(llm_provider=llm_provider, config=config, max_retries=3, retry_delay=2.0)
+        logger.info(f"[INIT] RewriterAgent v9.2: model={self.model}")
+
+    def rewrite_title(self, title: str, content: str = "") -> str:
+        """Переписать заголовок, возвращая только текст."""
         result = self.process(title, content)
         return result.improved_title
-    
-    def rewrite_with_details(
-        self,
-        title: str,
-        content: str
-    ) -> TitleResult:
+
+    def rewrite_with_details(self, title: str, content: str = "", max_length: int = 100) -> TitleResult:
         """
-        Rewrite title with full analysis.
-        
-        Аргументы:
-            title: Original title
+        Переписать заголовок с подробной информацией.
+
+        Args:
+            title: Оригинальный заголовок
             content: Содержание статьи
-            
-        Возвращает:
-            TitleResult with improved_title, issues, improvements
+            max_length: Максимальная длина нового заголовка
+
+        Returns:
+            Объект TitleResult с новым заголовком и дополнительной информацией
         """
-        return self.process(title, content)
-    
-    def process(self, title: str, content: str) -> TitleResult:
-        """
-        Main processing method - rewrite title.
-        
-        Аргументы:
-            title: Original title
-            content: Содержание статьи
-            
-        Возвращает:
-            TitleResult
-        """
-        prompt = self.REWRITE_PROMPT.format(
-            title=title,
-            content=content[:400]
-        )
-        
         try:
-            result = self.generate_structured(
+            # Используем существующий метод process для получения результата
+            result = self.process(title, content)
+
+            # Анализируем различия между оригиналом и улучшенной версией
+            reasoning = "Заголовок улучшен с учетом требований к информативности и читаемости"
+
+            # Определяем конкретные улучшения
+            if result.improved_title != title:
+                if len(result.improved_title) > len(title):
+                    reasoning = "Заголовок сделан более информативным и подробным"
+                elif len(result.improved_title) < len(title):
+                    reasoning = "Заголовок сделан более лаконичным и сфокусированным"
+                else:
+                    reasoning = "Заголовок переформулирован для лучшего восприятия"
+
+            # Создаем новый объект TitleResult с дополнительными полями
+            return TitleResult(
+                improved_title=result.improved_title,
+                original_issues=result.original_issues,
+                improvements_made=result.improvements_made,
+                reasoning=reasoning,
+                original_length=len(title),
+                new_length=len(result.improved_title)
+            )
+        except Exception as e:
+            logger.error(f"Ошибка в методе rewrite_with_details: {e}")
+            # Возвращаем базовый ответ в случае ошибки
+            return TitleResult(
+                improved_title=title,
+                original_issues=[f"Произошла ошибка: {str(e)}"],
+                improvements_made=[],
+                reasoning=f"Произошла ошибка: {str(e)}",
+                original_length=len(title),
+                new_length=len(title)
+            )
+
+    def process(self, title: str, content: str = "") -> TitleResult:
+        """Обработать заголовок и вернуть результат."""
+        prompt = self.REWRITE_PROMPT.format(title=title)
+
+        try:
+            response = self.generate(
                 prompt=prompt,
-                output_schema=TitleResult,
-                system_prompt=self.SYSTEM_PROMPT
+                system_prompt=self.SYSTEM_PROMPT,
+                max_tokens=80,
+                min_response_length=10
             )
-            
-            # Валидация and potentially fix title
-            result.improved_title = self._validate_title(
-                result.improved_title,
-                title
-            )
-            
-            logger.info(
-                f"Title rewritten: '{title[:30]}...' → "
-                f"'{result.improved_title[:30]}...' ({len(result.improved_title)} chars)"
-            )
-            
-            return result
-            
+
+            improved = self._extract_title(response, title)
+            improved = self._validate_title(improved, title)
+
+            # Анализируем различия между оригиналом и улучшенной версией
+            improvements = []
+            original_issues = []
+
+            if improved and improved != title and len(improved) >= 15:
+                # Определяем улучшения
+                if len(improved) > len(title):
+                    improvements.append("Более информативный")
+                if not any(char in title for char in ['!', '?']) and any(char in improved for char in ['!', '?']):
+                    improvements.append("Добавлена эмоциональная окраска")
+                if any(word in improved.lower() for word in ['как', 'почему', 'что']):
+                    improvements.append("Добавлен вопросительный элемент")
+                if not improvements:
+                    improvements.append("Улучшена структура")
+
+                logger.info(f"[Rewriter] '{title[:30]}...' -> '{improved[:30]}...'")
+                return TitleResult(
+                    improved_title=improved,
+                    improvements_made=improvements
+                )
+            else:
+                if not improved:
+                    original_issues.append("Не удалось сгенерировать улучшенный заголовок")
+                elif len(improved) < 15:
+                    original_issues.append("Слишком короткий заголовок")
+                elif improved == title:
+                    original_issues.append("Заголовок не был улучшен")
+
+                logger.warning(f"[Rewriter] Using original: {', '.join(original_issues)}")
+                return TitleResult(
+                    improved_title=title,
+                    original_issues=original_issues
+                )
+
         except Exception as e:
-            logger.error(f"Structured rewriting failed: {e}")
-            return self._rewrite_simple(title, content)
-    
-    def _rewrite_simple(self, title: str, content: str) -> TitleResult:
-        """Simple fallback title rewriting."""
-        prompt = f"""Improve this title. Make it professional, 40-80 символов.
-No clickbait, no exclamation marks, no personal pronouns.
-
-Original: {title}
-
-Context: {content[:300]}
-
-Improved title (only the title, no explanation):"""
-        
-        try:
-            response = self.generate(prompt=prompt, max_tokens=100)
-            improved = self._validate_title(response, title)
-            
+            logger.error(f"[Rewriter] Error: {e}")
             return TitleResult(
-                improved_title=improved,
-                original_issues=[],
-                improvements_made=[]
+                improved_title=title,
+                original_issues=[str(e)]
             )
-            
-        except Exception as e:
-            logger.error(f"Simple rewriting failed: {e}")
-            return TitleResult(
-                improved_title=title,  # Return original as fallback
-                original_issues=["Rewriting failed"],
-                improvements_made=[]
-            )
-    
-    def _validate_title(self, improved: str, original: str) -> str:
-        """
-        Валидация and fix improved title.
-        
-        Аргументы:
-            improved: Improved title from LLM
-            original: Original title (fallback)
-            
-        Возвращает:
-            Валидацияd title
-        """
-        # Clean common prefixes
+
+    def _extract_title(self, response: str, original: str) -> str:
+        """Извлечь заголовок из ответа модели."""
+        if not response:
+            return ""
+
+        text = response.strip()
+        text = re.sub(r'^```.*?\n', '', text)
+        text = re.sub(r'\n```$', '', text)
+
         prefixes = [
-            'Improved title:', 'Заголовок:', 'Заголовок:',
-            '**Improved:**', '**Заголовок:**', 'Улучшенный заголовок:'
+            r'^Improved\s*(?:title)?:\s*',
+            r'^Улучшенный\s*(?:заголовок)?:\s*',
+            r'^Заголовок:\s*',
+            r'^Title:\s*',
+            r'^->\s*',
         ]
-        
-        for prefix in prefixes:
-            if improved.lower().startswith(prefix.lower()):
-                improved = improved[len(prefix):].strip()
-        
-        # Remove quotes and cleanup
-        improved = improved.strip().strip('"').strip("'").strip('`')
-        
-        # Remove trailing punctuation
+        for pattern in prefixes:
+            text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+
+        lines = [l.strip() for l in text.split('\n') if l.strip()]
+        if lines:
+            text = lines[0]
+
+        for quote in ['"', "'", '`', '«', '»']:
+            text = text.strip(quote)
+
+        text = text.replace('**', '')
+        return text.strip()
+
+    def _validate_title(self, improved: str, original: str) -> str:
+        """Валидировать и корректировать улучшенный заголовок."""
+        if not improved:
+            return original
+
+        improved = improved.strip().strip('"').strip("'")
+        improved = improved.replace('**', '').replace('*', '')
+
         if improved.endswith('.'):
             improved = improved[:-1]
         improved = improved.replace('!', '')
-        
-        # Remove markdown
-        improved = improved.replace('**', '').replace('*', '')
-        
-        # Валидация length
-        if len(improved) < 10:
-            logger.warning(f"Improved title too short ({len(improved)} chars), using original")
+
+        if len(improved) < 15:
             return original
-        
-        if len(improved) > 150:
-            logger.warning(f"Improved title too long ({len(improved)} chars), truncating")
-            improved = improved[:150].rsplit(' ', 1)[0]
-        
-        # Log length warnings
-        if len(improved) < 40:
-            logger.info(f"Title shorter than optimal: {len(improved)} chars")
-        elif len(improved) > 80:
-            logger.info(f"Title longer than optimal: {len(improved)} chars")
-        
+
+        if len(improved) > 120:
+            improved = improved[:120].rsplit(' ', 1)[0]
+
         return improved
-    
-    def batch_rewrite(
-        self,
-        элементов: list[tuple[str, str]]
-    ) -> list[TitleResult]:
-        """
-        Rewrite multiple titles.
-        
-        Аргументы:
-            элементов: Список кортежей (заголовок, контент)
-            
-        Возвращает:
-            List of TitleResult
-        """
-        results = []
-        for title, content in элементов:
-            try:
-                result = self.process(title, content)
-                results.append(result)
-            except Exception as e:
-                logger.error(f"Batch rewrite error for '{title[:30]}': {e}")
-                results.append(TitleResult(
-                    improved_title=title,
-                    original_issues=[f"Ошибка: {str(e)}"],
-                    improvements_made=[]
-                ))
-        return results
