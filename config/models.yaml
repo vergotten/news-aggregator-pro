@@ -1,0 +1,52 @@
+# =============================================================================
+# Models Configuration v5.1 — Per-Agent Model Support
+# =============================================================================
+
+defaults:
+  provider: ollama
+  strategy: balanced
+  enable_fallback: true
+
+ollama:
+  model: qwen2.5:14b-instruct-q5_k_m   # дефолт для лёгких задач
+  base_url: http://ollama:11434
+  context_length: 32768
+
+# Per-agent модели: glm только для генерации текста
+#agent_models:
+#  rewriter: glm-4.7-flash:q4_K_M
+#  style_normalizer: glm-4.7-flash:q4_K_M
+#  telegram_formatter: glm-4.7-flash:q4_K_M
+
+temperatures:
+  classifier: 0.1
+  relevance: 0.3
+  quality_validator: 0.1
+  summarizer: 0.5
+  rewriter: 0.7
+  style_normalizer: 0.3
+  telegram_formatter: 0.5
+  seo_optimizer: 0.4
+
+pipeline:
+  limit: 10
+  min_relevance: 5
+  min_publish_score: 7
+  max_retries: 3
+  publish_telegraph: true
+  publish_telegram: false
+
+telegraph:
+  paragraphs_per_image: 3
+  max_content_length: 64000
+
+retry:
+  max_retries: 3
+  retry_delay: 1.0
+  exponential_backoff: true
+
+timeout:
+  default: 30
+  classification: 10
+  summarization: 60
+  normalization: 120

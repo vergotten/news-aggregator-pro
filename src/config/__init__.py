@@ -1,25 +1,49 @@
-# -*- coding: utf-8 -*-
 """
-Configuration - конфигурация моделей и системы.
-
-Компоненты:
-- ModelsConfig: Конфигурация AI моделей с профилями
-- AgentType: Перечисление типов агентов
-- get_models_config: Получение глобального инстанса конфигурации
+Configuration module for news aggregator.
 """
 
-from src.config.models_config import (
-    ModelsConfig,
-    AgentType,
-    AgentConfig,
-    ProfileConfig,
+# Only import what actually exists in models_config.py
+from .models_config import (
     get_models_config,
+    reset_models_config,
+    create_config_from_args,
+    ModelsConfig,
+    OperationMode,
+    SelectionStrategy,
+    TaskComplexity,
+    AgentType,
+    CacheStrategy,
+    CacheConfig,
+    MonitoringConfig,
+    ModelMetrics,
+    ModelInfo,
+    ProviderConfig,
+    AgentRequirements,
+    FallbackChain,
+    OpenRouterAutoDiscovery,
+    ModelCache,
+    RetryStrategy,
 )
 
+# PipelineConfig is defined in run_full_pipeline.py, not here
 __all__ = [
-    'ModelsConfig',
-    'AgentType',
-    'AgentConfig',
-    'ProfileConfig',
-    'get_models_config',
+    "get_models_config",
+    "reset_models_config",
+    "create_config_from_args",
+    "ModelsConfig",
+    "OperationMode",
+    "SelectionStrategy",
+    "TaskComplexity",
+    "AgentType",
+    "CacheStrategy",
+    "CacheConfig",
+    "MonitoringConfig",
+    "ModelMetrics",
+    "ModelInfo",
+    "ProviderConfig",
+    "AgentRequirements",
+    "FallbackChain",
+    "OpenRouterAutoDiscovery",
+    "ModelCache",
+    "RetryStrategy",
 ]

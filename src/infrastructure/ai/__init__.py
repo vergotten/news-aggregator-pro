@@ -1,30 +1,41 @@
-# -*- coding: utf-8 -*-
-"""
-AI Infrastructure - абстракции для работы с LLM провайдерами.
+# src/infrastructure/ai/__init__.py
 
-Компоненты:
-- LLMProvider: Базовый класс для LLM провайдеров
-- OllamaProvider: Провайдер для локального Ollama
-- OpenRouterProvider: Провайдер для облачного OpenRouter API
-- LLMProviderFactory: Фабрика для создания провайдеров
-"""
-
-from src.infrastructure.ai.llm_provider import (
-    LLMProvider,
+from .llm_provider import (
+    # Enums
     LLMProviderType,
+
+    # Data classes
     LLMConfig,
-    OllamaProvider,
+
+    # Base class
+    LLMProvider,
+
+    # Concrete providers
+    GroqProvider,
     OpenRouterProvider,
+    GoogleProvider,
+    OllamaProvider,
+
+    # Factory
     LLMProviderFactory,
-    get_llm_provider,
 )
 
 __all__ = [
-    'LLMProvider',
+    # Enums
     'LLMProviderType',
+
+    # Data classes
     'LLMConfig',
-    'OllamaProvider',
+
+    # Base class
+    'LLMProvider',
+
+    # Concrete providers
+    'GroqProvider',
     'OpenRouterProvider',
+    'GoogleProvider',
+    'OllamaProvider',
+
+    # Factory
     'LLMProviderFactory',
-    'get_llm_provider',
 ]

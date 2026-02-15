@@ -1,888 +1,1416 @@
-# -*- coding: utf-8 -*-
-# =============================================================================
-# Путь: src/infrastructure/ai/llm_provider.py
-# =============================================================================
 """
-LLM Provider - Multi-Provider система с автоматическим fallback.
+Модуль провайдеров LLM с автоматическим выбором моделей v5.0
 
-Версия 3.0.0:
-- OpenRouter (бесплатные модели, 50 req/day)
-- Groq (30 req/min, очень быстрый)
-- Google Gemini (60 req/min, 1500 req/day)
-- HuggingFace (fallback)
-- Ollama (локальный)
+Динамическая приоритизация по размеру модели:
+- HEAVY задачи → большие модели первые (сортировка по убыванию размера)
+- LIGHT задачи → маленькие модели первые (сортировка по возрастанию размера)
+- MEDIUM задачи → по контексту (по умолчанию)
 
-При выборе провайдера вручную — остальные используются как fallback при 429.
-
-Примеры:
-    >>> # Автоматический выбор с fallback по всем провайдерам
-    >>> llm = get_llm_provider("auto")
-
-    >>> # Groq как основной, остальные как fallback
-    >>> llm = get_llm_provider("groq")
-
-    >>> # OpenRouter как основной
-    >>> llm = get_llm_provider("openrouter", model="meta-llama/llama-3.3-70b-instruct:free")
+БЕЗ ХАРДКОДА моделей - размер извлекается из названия модели.
 """
 
-from abc import ABC, abstractmethod
-from enum import Enum
-from typing import Optional, Type, TypeVar, List, Dict, Any
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+import json
 import logging
+import os
 import re
 import time
-import os
+import random
+import requests
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from enum import Enum
+from threading import Lock
+from typing import Dict, Any, Optional, Type, TypeVar, Union, List
 
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.output_parsers import PydanticOutputParser
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
-
 T = TypeVar('T', bound=BaseModel)
 
 
+# =============================================================================
+# Перечисления и конфигурация
+# =============================================================================
+
 class LLMProviderType(str, Enum):
-    """Поддерживаемые провайдеры."""
-    OLLAMA = "ollama"
+    """
+    Типы поддерживаемых LLM провайдеров.
+    """
     OPENROUTER = "openrouter"
     GROQ = "groq"
     GOOGLE = "google"
-    HUGGINGFACE = "huggingface"
-    AUTO = "auto"  # Автоматический выбор
+    OLLAMA = "ollama"
+
+
+class TaskType(str, Enum):
+    """
+    Типы задач для выбора оптимальной модели.
+
+    HEAVY: Сложные задачи → большие модели первые (по убыванию размера)
+    LIGHT: Простые задачи → маленькие модели первые (по возрастанию размера)
+    MEDIUM: Средние задачи → по контексту (по умолчанию)
+    """
+    HEAVY = "heavy"
+    MEDIUM = "medium"
+    LIGHT = "light"
 
 
 @dataclass
 class LLMConfig:
-    """Конфигурация LLM провайдера."""
-    provider: LLMProviderType = LLMProviderType.OLLAMA
-    model: str = "qwen2.5:14b-instruct-q5_k_m"
+    """
+    Конфигурация LLM провайдера.
+    """
+    provider: LLMProviderType
+    model: str
     temperature: float = 0.7
-    max_tokens: int = 2000
-    base_url: Optional[str] = None
+    max_tokens: int = 4096
     api_key: Optional[str] = None
-    timeout: int = 120
-    use_fallback: bool = True  # Использовать fallback при ошибках
+    base_url: Optional[str] = None
+    context_length: int = 131072
 
-    OLLAMA_DEFAULT_URL = "http://ollama:11434"
     OPENROUTER_DEFAULT_URL = "https://openrouter.ai/api/v1"
+    GROQ_DEFAULT_URL = "https://api.groq.com/openai/v1"
+    GOOGLE_DEFAULT_URL = "https://generativelanguage.googleapis.com/v1beta"
+    OLLAMA_DEFAULT_URL = "http://ollama:11434"
+
+    def __post_init__(self):
+        if isinstance(self.provider, str):
+            self.provider = LLMProviderType(self.provider.lower())
 
     def get_base_url(self) -> str:
         if self.base_url:
             return self.base_url
-        if self.provider == LLMProviderType.OLLAMA:
-            return self.OLLAMA_DEFAULT_URL
-        elif self.provider == LLMProviderType.OPENROUTER:
-            return self.OPENROUTER_DEFAULT_URL
-        return ""
+
+        defaults = {
+            LLMProviderType.OPENROUTER: self.OPENROUTER_DEFAULT_URL,
+            LLMProviderType.GROQ: self.GROQ_DEFAULT_URL,
+            LLMProviderType.GOOGLE: self.GOOGLE_DEFAULT_URL,
+            LLMProviderType.OLLAMA: self.OLLAMA_DEFAULT_URL,
+        }
+        return defaults.get(self.provider, "")
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "LLMConfig":
+        try:
+            provider = data.get("provider", "ollama")
+            if isinstance(provider, str):
+                provider = LLMProviderType(provider.lower())
+
+            # Для ollama: если model не задан явно, берём из env → дефолт
+            default_model = (
+                os.getenv("OLLAMA_MODEL", "qwen2.5:14b-instruct-q5_k_m")
+                if provider == LLMProviderType.OLLAMA
+                else "qwen2.5:14b-instruct-q5_k_m"
+            )
+
+            return cls(
+                provider=provider,
+                model=data.get("model") or default_model,
+                temperature=data.get("temperature", 0.7),
+                max_tokens=data.get("max_tokens", 4096),
+                api_key=data.get("api_key"),
+                base_url=data.get("base_url"),
+                context_length=data.get("context_length", 131072),
+            )
+        except Exception as e:
+            logger.error(f"Ошибка создания LLMConfig: {e}")
+            return cls(
+                provider=LLMProviderType.OLLAMA,
+                model=os.getenv("OLLAMA_MODEL", "glm-4.7-flash:q4_K_M"),
+            )
 
 
 # =============================================================================
-# Базовый класс провайдера
+# Обнаружение моделей OpenRouter
+# =============================================================================
+
+@dataclass
+class FreeModel:
+    """
+    Информация о бесплатной модели OpenRouter.
+    """
+    id: str
+    name: str
+    context_length: int
+    max_output: int
+    capabilities: List[str] = field(default_factory=list)
+
+    def __repr__(self) -> str:
+        return f"FreeModel({self.id}, ctx={self.context_length})"
+
+
+class OpenRouterModelDiscovery:
+    """
+    Динамическое обнаружение бесплатных моделей OpenRouter.
+
+    Поддерживает сортировку по размеру модели для TaskType.
+    """
+
+    _instance = None
+    _lock = Lock()
+
+    API_URL = "https://openrouter.ai/api/v1/models"
+    CACHE_TTL_SECONDS = 3600
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialized = False
+        return cls._instance
+
+    def __init__(self):
+        if getattr(self, '_initialized', False):
+            return
+
+        self._models: List[FreeModel] = []
+        self._last_fetch: Optional[datetime] = None
+        self._api_key = os.getenv("OPENROUTER_API_KEY")
+        self._initialized = True
+        logger.info("OpenRouterModelDiscovery инициализирован")
+
+    def get_model_size(self, model_id: str) -> int:
+        """
+        Извлечь размер модели из её ID (в миллиардах параметров).
+
+        Примеры:
+            qwen/qwen3-235b → 235
+            meta-llama/llama-3.3-70b-instruct → 70
+            google/gemma-3-4b-it → 4
+            deepseek/deepseek-chat → 100 (дефолт для известных больших)
+
+        Returns:
+            Размер в миллиардах (int)
+        """
+        model_lower = model_id.lower()
+
+        # Ищем паттерны размера: 235b, 70b, 4b, 3.5b и т.д.
+        patterns = [
+            r'(\d+\.?\d*)b(?:-|:|$|_|\.)',  # 70b-, 235b:, 4b_, 70b.
+            r'-(\d+\.?\d*)b',                # -70b
+            r'(\d+\.?\d*)b-',                # 70b-
+            r'[/-](\d+)b',                   # /70b или -70b
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, model_lower)
+            if match:
+                try:
+                    size = float(match.group(1))
+                    return int(size)
+                except:
+                    pass
+
+        # Известные большие модели без размера в названии
+        big_models = {
+            'deepseek-chat': 100,
+            'deepseek-v3': 100,
+            'gpt-4': 100,
+            'claude': 100,
+            'gemini-pro': 50,
+            'gemini-2': 50,
+            'gemini-flash': 30,
+        }
+        for name, size in big_models.items():
+            if name in model_lower:
+                return size
+
+        # Дефолт для неизвестных
+        return 20
+
+    def get_models_sorted_by_size(
+            self,
+            ascending: bool = True,
+            min_context: int = 4000
+    ) -> List[FreeModel]:
+        """
+        Получить модели отсортированные по размеру.
+
+        Args:
+            ascending: True = маленькие первые, False = большие первые
+            min_context: Минимальный контекст
+
+        Returns:
+            Отсортированный список моделей
+        """
+        models = self.get_free_models(min_context=min_context)
+
+        if not models:
+            return []
+
+        # Сортируем по размеру
+        sorted_models = sorted(
+            models,
+            key=lambda m: self.get_model_size(m.id),
+            reverse=not ascending
+        )
+
+        return sorted_models
+
+    def get_free_models(
+            self,
+            min_context: int = 4000,
+            force_refresh: bool = False
+    ) -> List[FreeModel]:
+        """
+        Получить список бесплатных моделей.
+        """
+        try:
+            if not force_refresh and self._models and self._last_fetch:
+                age = (datetime.now() - self._last_fetch).total_seconds()
+                if age < self.CACHE_TTL_SECONDS:
+                    logger.debug(f"Используем кэш моделей: {len(self._models)} моделей")
+                    return [m for m in self._models if m.context_length >= min_context]
+
+            logger.info("Запрос списка моделей с OpenRouter API...")
+            self._fetch_models()
+
+            filtered = [m for m in self._models if m.context_length >= min_context]
+            logger.info(f"Получено {len(self._models)} моделей, отфильтровано: {len(filtered)}")
+
+            return filtered
+
+        except Exception as e:
+            logger.error(f"Ошибка получения моделей: {e}")
+            return []
+
+    def get_best_model(self, min_context: int = 4000) -> Optional[FreeModel]:
+        """Получить лучшую бесплатную модель."""
+        try:
+            models = self.get_free_models(min_context=min_context)
+            return models[0] if models else None
+        except Exception as e:
+            logger.error(f"Ошибка получения лучшей модели: {e}")
+            return None
+
+    def _fetch_models(self) -> None:
+        """Запросить модели с API OpenRouter."""
+        headers = {}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+
+        max_retries = 3
+        retry_delay = 5
+
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Попытка {attempt + 1}/{max_retries} запроса моделей...")
+
+                response = requests.get(
+                    self.API_URL,
+                    headers=headers,
+                    timeout=60
+                )
+
+                if response.status_code != 200:
+                    if response.status_code == 408 and attempt < max_retries - 1:
+                        logger.warning(f"Таймаут, повтор через {retry_delay}с...")
+                        time.sleep(retry_delay)
+                        retry_delay *= 2
+                        continue
+
+                    logger.error(f"Ошибка API: {response.status_code}")
+                    if attempt == max_retries - 1:
+                        self._use_fallback_models()
+                    return
+
+                data = response.json()
+                models = []
+
+                for item in data.get("data", []):
+                    try:
+                        pricing = item.get("pricing", {})
+                        prompt_price = float(pricing.get("prompt", "1") or "1")
+                        completion_price = float(pricing.get("completion", "1") or "1")
+
+                        if prompt_price == 0 and completion_price == 0:
+                            model = FreeModel(
+                                id=item.get("id", ""),
+                                name=item.get("name", ""),
+                                context_length=item.get("context_length", 4096),
+                                max_output=item.get("top_provider", {}).get("max_completion_tokens", 4096),
+                                capabilities=self._extract_capabilities(item),
+                            )
+                            models.append(model)
+                    except Exception as e:
+                        logger.warning(f"Ошибка обработки модели {item.get('id')}: {e}")
+
+                models.sort(key=lambda m: (-m.context_length, m.name))
+
+                self._models = models
+                self._last_fetch = datetime.now()
+
+                logger.info(f"Успешно получено {len(models)} моделей")
+                return
+
+            except requests.exceptions.RequestException as e:
+                if "timeout" in str(e).lower() and attempt < max_retries - 1:
+                    logger.warning(f"Сетевая ошибка, повтор через {retry_delay}с...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2
+                    continue
+
+                logger.error(f"Сетевая ошибка: {e}")
+                if attempt == max_retries - 1:
+                    self._use_fallback_models()
+                return
+            except Exception as e:
+                logger.error(f"Неожиданная ошибка: {e}")
+                if attempt == max_retries - 1:
+                    self._use_fallback_models()
+                return
+
+        logger.error("Все попытки запроса моделей провалены")
+        self._use_fallback_models()
+
+    def _extract_capabilities(self, item: Dict) -> List[str]:
+        """Извлечь возможности модели из данных API."""
+        try:
+            caps = ["chat"]
+
+            arch = item.get("architecture", {})
+            modality = arch.get("modality", "")
+            if "image" in modality.lower():
+                caps.append("vision")
+
+            params = item.get("supported_parameters", [])
+            if params and ("tools" in params or "functions" in params):
+                caps.append("function_calling")
+
+            return caps
+        except Exception as e:
+            logger.warning(f"Ошибка извлечения возможностей: {e}")
+            return ["chat"]
+
+    def _use_fallback_models(self) -> None:
+        """Использовать предопределенный список моделей при ошибке API."""
+        logger.warning("Используем резервный список моделей")
+        self._models = [
+            FreeModel("google/gemini-2.0-flash-exp:free", "Gemini 2.0 Flash", 1048576, 8192, ["chat", "vision"]),
+            FreeModel("meta-llama/llama-4-scout:free", "Llama 4 Scout", 524288, 16384, ["chat"]),
+            FreeModel("meta-llama/llama-4-maverick:free", "Llama 4 Maverick", 131072, 16384, ["chat", "vision"]),
+            FreeModel("deepseek/deepseek-chat-v3-0324:free", "DeepSeek Chat V3", 131072, 8192, ["chat"]),
+            FreeModel("mistralai/mistral-small-3.1-24b-instruct:free", "Mistral Small 3.1", 131072, 8192, ["chat"]),
+            FreeModel("qwen/qwen2.5-72b-instruct:free", "Qwen 2.5 72B", 131072, 8192, ["chat"]),
+            FreeModel("meta-llama/llama-3.3-70b-instruct:free", "Llama 3.3 70B", 131072, 8192, ["chat"]),
+            FreeModel("meta-llama/llama-3.1-8b-instruct:free", "Llama 3.1 8B", 131072, 4096, ["chat"]),
+        ]
+        self._last_fetch = datetime.now()
+
+
+# =============================================================================
+# Отслеживание состояния моделей
+# =============================================================================
+
+@dataclass
+class ModelStatus:
+    """Статус модели для отслеживания rate-limit."""
+    model_id: str
+    errors: int = 0
+    cooldown_until: Optional[datetime] = None
+    last_success: Optional[datetime] = None
+
+    @property
+    def is_available(self) -> bool:
+        if self.cooldown_until is None:
+            return True
+        return datetime.now() >= self.cooldown_until
+
+    def record_error(self) -> None:
+        try:
+            self.errors += 1
+            cooldown = min(30 * (2 ** (self.errors - 1)), 600)
+            jitter = cooldown * 0.2 * (random.random() * 2 - 1)
+            cooldown += jitter
+
+            self.cooldown_until = datetime.now() + timedelta(seconds=cooldown)
+            logger.warning(f"Модель {self.model_id}: cooldown {cooldown:.0f}с (ошибок: {self.errors})")
+        except Exception as e:
+            logger.error(f"Ошибка записи ошибки модели: {e}")
+
+    def record_success(self) -> None:
+        try:
+            self.errors = 0
+            self.cooldown_until = None
+            self.last_success = datetime.now()
+        except Exception as e:
+            logger.error(f"Ошибка записи успеха модели: {e}")
+
+
+class ModelStatusTracker:
+    """Синглтон для отслеживания статуса всех моделей."""
+
+    _instance = None
+    _lock = Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._statuses = {}
+        return cls._instance
+
+    def get(self, model_id: str) -> ModelStatus:
+        if model_id not in self._statuses:
+            self._statuses[model_id] = ModelStatus(model_id=model_id)
+        return self._statuses[model_id]
+
+    def is_available(self, model_id: str) -> bool:
+        try:
+            return self.get(model_id).is_available
+        except Exception as e:
+            logger.error(f"Ошибка проверки доступности модели {model_id}: {e}")
+            return False
+
+    def record_error(self, model_id: str) -> None:
+        try:
+            self.get(model_id).record_error()
+        except Exception as e:
+            logger.error(f"Ошибка записи ошибки модели {model_id}: {e}")
+
+    def record_success(self, model_id: str) -> None:
+        try:
+            self.get(model_id).record_success()
+        except Exception as e:
+            logger.error(f"Ошибка записи успеха модели {model_id}: {e}")
+
+    def get_available_models(self, model_ids: List[str]) -> List[str]:
+        try:
+            return [m for m in model_ids if self.is_available(m)]
+        except Exception as e:
+            logger.error(f"Ошибка получения доступных моделей: {e}")
+            return []
+
+
+# =============================================================================
+# Базовый провайдер
 # =============================================================================
 
 class LLMProvider(ABC):
     """Абстрактный базовый класс для LLM провайдеров."""
 
-    def __init__(self, config: LLMConfig):
-        self.config = config
-        self._client: Optional[BaseChatModel] = None
+    def __init__(self, config: Union[Dict[str, Any], LLMConfig]):
+        try:
+            if isinstance(config, dict):
+                self.config = LLMConfig.from_dict(config)
+            else:
+                self.config = config
 
-    @property
-    def client(self) -> BaseChatModel:
-        if self._client is None:
-            self._client = self._create_client()
-        return self._client
+            self.provider_name = self.config.provider.value
+            self.model = self.config.model
+            self.api_key = self.config.api_key
+            self.base_url = self.config.get_base_url()
+
+            self._request_count = 0
+            self._error_count = 0
+
+            logger.info(f"Провайдер {self.provider_name} инициализирован")
+        except Exception as e:
+            logger.error(f"Ошибка инициализации провайдера: {e}")
+            raise
 
     @abstractmethod
-    def _create_client(self) -> BaseChatModel:
-        pass
-
     def generate(
             self,
             prompt: str,
             system_prompt: Optional[str] = None,
             temperature: Optional[float] = None,
-            max_tokens: Optional[int] = None
+            max_tokens: Optional[int] = None,
+            **kwargs
     ) -> str:
-        messages = []
-        if system_prompt:
-            messages.append(SystemMessage(content=system_prompt))
-        messages.append(HumanMessage(content=prompt))
-
-        client = self.client
-        if temperature is not None or max_tokens is not None:
-            client = self._get_client_with_overrides(temperature, max_tokens)
-
-        try:
-            response = client.invoke(messages)
-            return response.content.strip()
-        except Exception as e:
-            logger.error(f"Ошибка генерации LLM: {e}", exc_info=True)
-            raise
+        pass
 
     def generate_structured(
             self,
             prompt: str,
             output_schema: Type[T],
-            system_prompt: Optional[str] = None
+            system_prompt: Optional[str] = None,
+            max_retries: int = 3,
+            **kwargs
     ) -> T:
-        parser = PydanticOutputParser(pydantic_object=output_schema)
-        format_instructions = parser.get_format_instructions()
-        enhanced_prompt = f"{prompt}\n\n{format_instructions}"
+        """Генерация структурированного ответа."""
+        last_error = None
 
-        messages = []
-        if system_prompt:
-            messages.append(SystemMessage(content=system_prompt))
-        messages.append(HumanMessage(content=enhanced_prompt))
-
-        try:
-            response = self.client.invoke(messages)
-            return parser.parse(response.content)
-        except Exception as e:
-            logger.error(f"Ошибка структурированной генерации: {e}", exc_info=True)
-            raise
-
-    def _get_client_with_overrides(
-            self,
-            temperature: Optional[float],
-            max_tokens: Optional[int]
-    ) -> BaseChatModel:
-        return self.client
-
-    def health_check(self) -> bool:
-        try:
-            self.generate("Скажи 'ok'", max_tokens=10)
-            return True
-        except Exception as e:
-            logger.warning(f"Health check не прошёл: {e}")
-            return False
-
-
-# =============================================================================
-# Ollama Provider (локальный)
-# =============================================================================
-
-class OllamaProvider(LLMProvider):
-    """Локальный Ollama провайдер."""
-
-    def _create_client(self) -> BaseChatModel:
-        from langchain_ollama import ChatOllama
-        return ChatOllama(
-            model=self.config.model,
-            base_url=self.config.get_base_url(),
-            temperature=self.config.temperature,
-            num_predict=self.config.max_tokens,
-            timeout=self.config.timeout
-        )
-
-    def _get_client_with_overrides(self, temperature, max_tokens) -> BaseChatModel:
-        from langchain_ollama import ChatOllama
-        return ChatOllama(
-            model=self.config.model,
-            base_url=self.config.get_base_url(),
-            temperature=temperature if temperature is not None else self.config.temperature,
-            num_predict=max_tokens if max_tokens is not None else self.config.max_tokens,
-            timeout=self.config.timeout
-        )
-
-    def list_models(self) -> list[str]:
-        try:
-            import ollama
-            client = ollama.Client(host=self.config.get_base_url())
-            models = client.list()
-            return [m['name'] for m in models.get('models', [])]
-        except Exception as e:
-            logger.error(f"Ошибка получения списка моделей Ollama: {e}")
-            return []
-
-
-# =============================================================================
-# OpenRouter Provider
-# =============================================================================
-
-class OpenRouterProvider(LLMProvider):
-    """OpenRouter провайдер с бесплатными моделями."""
-
-    MODELS = {
-        "gpt-4o": "openai/gpt-4o",
-        "gpt-4o-mini": "openai/gpt-4o-mini",
-        "claude-3.5-sonnet": "anthropic/claude-3.5-sonnet",
-        "claude-3-haiku": "anthropic/claude-3-haiku",
-        "llama-3.1-70b": "meta-llama/llama-3.1-70b-instruct",
-        "llama-3.1-8b": "meta-llama/llama-3.1-8b-instruct",
-        "mistral-7b": "mistralai/mistral-7b-instruct",
-        "mixtral-8x7b": "mistralai/mixtral-8x7b-instruct",
-        # Free models
-        "llama-3.3-70b-free": "meta-llama/llama-3.3-70b-instruct:free",
-        "gemma-3-27b-free": "google/gemma-3-27b-it:free",
-        "mistral-24b-free": "mistralai/mistral-small-3.1-24b-instruct:free",
-    }
-
-    FREE_MODELS = [
-        "meta-llama/llama-3.3-70b-instruct:free",
-        "google/gemma-3-27b-it:free",
-        "mistralai/mistral-small-3.1-24b-instruct:free",
-        "qwen/qwen-2.5-vl-7b-instruct:free",
-        "meta-llama/llama-3.2-3b-instruct:free",
-    ]
-
-    def __init__(self, config: LLMConfig):
-        if not config.api_key:
-            config.api_key = os.getenv("OPENROUTER_API_KEY")
-        if not config.api_key:
-            raise ValueError("OPENROUTER_API_KEY не установлен")
-        super().__init__(config)
-
-    def _create_client(self) -> BaseChatModel:
-        from langchain_openai import ChatOpenAI
-
-        model = self._resolve_model(self.config.model)
-
-        client_kwargs = {
-            "model": model,
-            "openai_api_key": self.config.api_key,
-            "openai_api_base": self.config.get_base_url(),
-            "temperature": self.config.temperature,
-            "max_tokens": self.config.max_tokens,
-            "timeout": self.config.timeout,
-            "default_headers": {
-                "HTTP-Referer": "https://news-aggregator-pro.local",
-                "X-Title": "News Aggregator Pro"
-            }
-        }
-
-        if "glm" in model.lower() or "z-ai" in model.lower():
-            client_kwargs["extra_body"] = {"reasoning": {"enabled": False}}
-
-        return ChatOpenAI(**client_kwargs)
-
-    def _get_client_with_overrides(self, temperature, max_tokens) -> BaseChatModel:
-        from langchain_openai import ChatOpenAI
-
-        model = self._resolve_model(self.config.model)
-
-        client_kwargs = {
-            "model": model,
-            "openai_api_key": self.config.api_key,
-            "openai_api_base": self.config.get_base_url(),
-            "temperature": temperature if temperature is not None else self.config.temperature,
-            "max_tokens": max_tokens if max_tokens is not None else self.config.max_tokens,
-            "timeout": self.config.timeout,
-            "default_headers": {
-                "HTTP-Referer": "https://news-aggregator-pro.local",
-                "X-Title": "News Aggregator Pro"
-            }
-        }
-
-        if "glm" in model.lower() or "z-ai" in model.lower():
-            client_kwargs["extra_body"] = {"reasoning": {"enabled": False}}
-
-        return ChatOpenAI(**client_kwargs)
-
-    def _resolve_model(self, model: str) -> str:
-        if model == "auto" or not model:
-            return self.FREE_MODELS[0]
-        return self.MODELS.get(model, model)
-
-
-# =============================================================================
-# Groq Provider (очень быстрый, 30 req/min бесплатно)
-# =============================================================================
-
-class GroqProvider(LLMProvider):
-    """
-    Groq провайдер - самый быстрый inference.
-
-    Бесплатно: 30 req/min, 14400 req/day
-    Модели: llama-3.1-70b-versatile, llama-3.1-8b-instant, mixtral-8x7b-32768
-
-    Получить ключ: https://console.groq.com
-    """
-
-    DEFAULT_MODEL = "llama-3.1-70b-versatile"
-
-    MODELS = {
-        "llama-70b": "llama-3.1-70b-versatile",
-        "llama-8b": "llama-3.1-8b-instant",
-        "mixtral": "mixtral-8x7b-32768",
-        "gemma-9b": "gemma2-9b-it",
-        "llama-3.3-70b": "llama-3.3-70b-versatile",
-    }
-
-    def __init__(self, config: LLMConfig):
-        if not config.api_key:
-            config.api_key = os.getenv("GROQ_API_KEY")
-        if not config.api_key:
-            raise ValueError(
-                "GROQ_API_KEY не установлен. "
-                "Получить бесплатно: https://console.groq.com"
-            )
-        super().__init__(config)
-
-    def _create_client(self) -> BaseChatModel:
-        from langchain_groq import ChatGroq
-
-        model = self.config.model
-        if model == "auto" or not model:
-            model = self.DEFAULT_MODEL
-        model = self.MODELS.get(model, model)
-
-        return ChatGroq(
-            model=model,
-            api_key=self.config.api_key,
-            temperature=self.config.temperature,
-            max_tokens=self.config.max_tokens,
-            timeout=self.config.timeout,
-            max_retries=2,
-        )
-
-    def _get_client_with_overrides(self, temperature, max_tokens) -> BaseChatModel:
-        from langchain_groq import ChatGroq
-
-        model = self.config.model
-        if model == "auto" or not model:
-            model = self.DEFAULT_MODEL
-        model = self.MODELS.get(model, model)
-
-        return ChatGroq(
-            model=model,
-            api_key=self.config.api_key,
-            temperature=temperature if temperature is not None else self.config.temperature,
-            max_tokens=max_tokens if max_tokens is not None else self.config.max_tokens,
-            timeout=self.config.timeout,
-            max_retries=2,
-        )
-
-
-# =============================================================================
-# Google Gemini Provider (60 req/min бесплатно)
-# =============================================================================
-
-class GoogleProvider(LLMProvider):
-    """
-    Google Gemini провайдер.
-
-    Бесплатно: 60 req/min, 1500 req/day
-    Модели: gemini-1.5-flash, gemini-1.5-pro, gemini-2.0-flash-exp
-
-    Получить ключ: https://aistudio.google.com/apikey
-    """
-
-    DEFAULT_MODEL = "gemini-1.5-flash"
-
-    MODELS = {
-        "gemini-flash": "gemini-1.5-flash",
-        "gemini-pro": "gemini-1.5-pro",
-        "gemini-2": "gemini-2.0-flash-exp",
-        "gemini-2.5-flash": "gemini-2.5-flash-preview-05-20",
-    }
-
-    def __init__(self, config: LLMConfig):
-        if not config.api_key:
-            config.api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-        if not config.api_key:
-            raise ValueError(
-                "GOOGLE_API_KEY не установлен. "
-                "Получить бесплатно: https://aistudio.google.com/apikey"
-            )
-        super().__init__(config)
-
-    def _create_client(self) -> BaseChatModel:
-        from langchain_google_genai import ChatGoogleGenerativeAI
-
-        model = self.config.model
-        if model == "auto" or not model:
-            model = self.DEFAULT_MODEL
-        model = self.MODELS.get(model, model)
-
-        return ChatGoogleGenerativeAI(
-            model=model,
-            google_api_key=self.config.api_key,
-            temperature=self.config.temperature,
-            max_output_tokens=self.config.max_tokens,
-            timeout=self.config.timeout,
-        )
-
-    def _get_client_with_overrides(self, temperature, max_tokens) -> BaseChatModel:
-        from langchain_google_genai import ChatGoogleGenerativeAI
-
-        model = self.config.model
-        if model == "auto" or not model:
-            model = self.DEFAULT_MODEL
-        model = self.MODELS.get(model, model)
-
-        return ChatGoogleGenerativeAI(
-            model=model,
-            google_api_key=self.config.api_key,
-            temperature=temperature if temperature is not None else self.config.temperature,
-            max_output_tokens=max_tokens if max_tokens is not None else self.config.max_tokens,
-            timeout=self.config.timeout,
-        )
-
-
-# =============================================================================
-# HuggingFace Provider (fallback)
-# =============================================================================
-
-class HuggingFaceProvider(LLMProvider):
-    """
-    HuggingFace Inference API провайдер.
-
-    Получить токен: https://huggingface.co/settings/tokens
-    """
-
-    DEFAULT_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"
-
-    def __init__(self, config: LLMConfig):
-        if not config.api_key:
-            config.api_key = os.getenv("HUGGINGFACEHUB_API_TOKEN") or os.getenv("HF_TOKEN")
-        if not config.api_key:
-            raise ValueError(
-                "HUGGINGFACEHUB_API_TOKEN не установлен. "
-                "Получить: https://huggingface.co/settings/tokens"
-            )
-        super().__init__(config)
-
-    def _create_client(self) -> BaseChatModel:
-        from langchain_huggingface import HuggingFaceEndpoint
-
-        model = self.config.model
-        if model == "auto" or not model:
-            model = self.DEFAULT_MODEL
-
-        return HuggingFaceEndpoint(
-            repo_id=model,
-            huggingfacehub_api_token=self.config.api_key,
-            temperature=self.config.temperature,
-            max_new_tokens=self.config.max_tokens,
-            timeout=self.config.timeout,
-        )
-
-
-# =============================================================================
-# Provider Stats для отслеживания ошибок
-# =============================================================================
-
-@dataclass
-class ProviderStats:
-    """Статистика провайдера."""
-    requests_total: int = 0
-    requests_success: int = 0
-    requests_failed: int = 0
-    last_error: Optional[str] = None
-    last_error_time: Optional[datetime] = None
-    cooldown_until: Optional[datetime] = None
-
-
-# =============================================================================
-# Multi-Provider Wrapper с Fallback
-# =============================================================================
-
-class MultiProviderWrapper(LLMProvider):
-    """
-    Обёртка над провайдером с автоматическим fallback на другие провайдеры.
-
-    При выборе основного провайдера (например, Groq), остальные доступные
-    провайдеры используются как fallback при ошибках 429/502/503.
-
-    Порядок fallback: Groq → Google → OpenRouter → HuggingFace
-    """
-
-    # Порядок fallback провайдеров
-    FALLBACK_ORDER = [
-        LLMProviderType.GROQ,
-        LLMProviderType.GOOGLE,
-        LLMProviderType.OPENROUTER,
-        LLMProviderType.HUGGINGFACE,
-    ]
-
-    # Дефолтные модели
-    DEFAULT_MODELS = {
-        LLMProviderType.GROQ: "llama-3.1-70b-versatile",
-        LLMProviderType.GOOGLE: "gemini-1.5-flash",
-        LLMProviderType.OPENROUTER: "meta-llama/llama-3.3-70b-instruct:free",
-        LLMProviderType.HUGGINGFACE: "mistralai/Mistral-7B-Instruct-v0.3",
-    }
-
-    # Cooldown в секундах
-    COOLDOWN_SECONDS = {
-        LLMProviderType.GROQ: 65,
-        LLMProviderType.GOOGLE: 65,
-        LLMProviderType.OPENROUTER: 120,
-        LLMProviderType.HUGGINGFACE: 300,
-    }
-
-    # Классы провайдеров
-    PROVIDER_CLASSES = {
-        LLMProviderType.GROQ: GroqProvider,
-        LLMProviderType.GOOGLE: GoogleProvider,
-        LLMProviderType.OPENROUTER: OpenRouterProvider,
-        LLMProviderType.HUGGINGFACE: HuggingFaceProvider,
-    }
-
-    def __init__(self, config: LLMConfig, primary_provider: Optional[LLMProviderType] = None):
-        """
-        Инициализация multi-provider wrapper.
-
-        Args:
-            config: Базовая конфигурация
-            primary_provider: Основной провайдер (None = auto)
-        """
-        self.base_config = config
-        self.primary_provider = primary_provider
-        self.providers: Dict[LLMProviderType, LLMProvider] = {}
-        self.stats: Dict[LLMProviderType, ProviderStats] = {}
-        self._current_provider: Optional[LLMProviderType] = None
-
-        # Определяем порядок провайдеров
-        if primary_provider and primary_provider in self.FALLBACK_ORDER:
-            # Основной провайдер первым, остальные как fallback
-            self.provider_order = [primary_provider] + [
-                p for p in self.FALLBACK_ORDER if p != primary_provider
-            ]
-        else:
-            self.provider_order = self.FALLBACK_ORDER.copy()
-
-        self._init_providers()
-
-    def _init_providers(self):
-        """Инициализировать доступные провайдеры."""
-        for provider_type in self.provider_order:
+        for attempt in range(max_retries):
             try:
-                provider = self._create_single_provider(provider_type)
-                self.providers[provider_type] = provider
-                self.stats[provider_type] = ProviderStats()
-                logger.info(f"✓ {provider_type.value} инициализирован")
-            except ValueError as e:
-                logger.warning(f"✗ {provider_type.value} недоступен: {e}")
-            except ImportError as e:
-                logger.warning(f"✗ {provider_type.value} не установлен: {e}")
-            except Exception as e:
-                logger.warning(f"✗ {provider_type.value} ошибка: {e}")
+                example_json = self._build_example_json(output_schema)
 
-        if not self.providers:
-            raise ValueError(
-                "Нет доступных провайдеров! Установите API ключи:\n"
-                "- GROQ_API_KEY (https://console.groq.com)\n"
-                "- GOOGLE_API_KEY (https://aistudio.google.com/apikey)\n"
-                "- OPENROUTER_API_KEY (https://openrouter.ai/keys)"
+                json_prompt = f"""{prompt}
+
+ВАЖНО: Ответь ТОЛЬКО валидным JSON объектом. Никакого текста до или после JSON.
+Заполни все поля своими реальными значениями по результатам анализа.
+
+Формат ответа (заполни своими значениями):
+{example_json}
+
+Начни ответ с {{ и закончи }}. Без markdown, без ```. Только JSON."""
+
+                temp = 0.1 if attempt >= max_retries - 1 else 0.2
+
+                response = self.generate(
+                    json_prompt,
+                    system_prompt,
+                    temperature=temp,
+                    **kwargs
+                )
+
+                json_data = self._extract_json(response)
+                if json_data:
+                    json_data = self._clean_schema_artifacts(json_data, output_schema)
+                    return output_schema(**json_data)
+
+                last_error = ValueError("Не найден валидный JSON в ответе")
+
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Попытка {attempt + 1} структурированного вывода не удалась: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(1)
+
+        raise ValueError(f"Не удалось получить структурированный ответ: {last_error}")
+
+    def _build_example_json(self, schema: Type[BaseModel]) -> str:
+        """Построить JSON-пример на основе Pydantic схемы."""
+        try:
+            try:
+                fields = schema.model_fields
+            except AttributeError:
+                fields = schema.__fields__
+
+            example = {}
+            for field_name, field_info in fields.items():
+                try:
+                    annotation = field_info.annotation
+                    description = field_info.description or ""
+                except AttributeError:
+                    annotation = field_info.outer_type_
+                    description = field_info.field_info.description or ""
+
+                example[field_name] = self._example_value_for_type(
+                    field_name, annotation, description
+                )
+
+            return json.dumps(example, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"Ошибка построения примера JSON: {e}")
+            return "{}"
+
+    def _example_value_for_type(self, name: str, annotation, description: str) -> Any:
+        """Сгенерировать пример значения для поля."""
+        try:
+            type_str = str(annotation).lower() if annotation else ""
+
+            if annotation is int or "int" in type_str:
+                if "score" in name or "оценк" in name.lower():
+                    return 7
+                return 5
+
+            if annotation is float or "float" in type_str:
+                return 0.8
+
+            if annotation is bool or "bool" in type_str:
+                return True
+
+            if "list" in type_str:
+                if "categor" in name or "катег" in name.lower():
+                    return ["AI/ML", "DevOps"]
+                if "tag" in name:
+                    return ["python", "machine-learning"]
+                return ["пример1", "пример2"]
+
+            if annotation is str or "str" in type_str:
+                if "reason" in name or "причин" in name.lower():
+                    return "ваше объяснение здесь"
+                if "audience" in name or "аудитор" in name.lower():
+                    return "developers"
+                if "categor" in name:
+                    return "Technology"
+                if description:
+                    return f"<{description[:40]}>"
+                return f"<заполните {name}>"
+
+            return f"<{name}>"
+        except Exception as e:
+            logger.error(f"Ошибка генерации примера значения: {e}")
+            return "<значение>"
+
+    def _clean_schema_artifacts(self, data: Dict[str, Any], schema: Type[BaseModel]) -> Dict[str, Any]:
+        """Очистить данные от артефактов JSON Schema."""
+        try:
+            try:
+                expected_fields = set(schema.model_fields.keys())
+            except AttributeError:
+                expected_fields = set(schema.__fields__.keys())
+
+            schema_meta_fields = {
+                "description", "title", "type", "properties",
+                "required", "$defs", "definitions", "additionalProperties"
+            }
+
+            data_keys = set(data.keys())
+            is_schema_response = (
+                    data_keys & schema_meta_fields and
+                    not (data_keys & expected_fields)
             )
 
-        logger.info(f"MultiProvider: {len(self.providers)} провайдеров готово")
+            if is_schema_response:
+                if "properties" in data:
+                    props = data["properties"]
+                    extracted = {}
+                    for key, val in props.items():
+                        if key in expected_fields:
+                            if isinstance(val, dict) and "default" in val:
+                                extracted[key] = val["default"]
+                            elif isinstance(val, dict) and "example" in val:
+                                extracted[key] = val["example"]
+                            else:
+                                extracted[key] = val
+                    if extracted:
+                        logger.warning("Модель вернула JSON Schema, извлекаем данные")
+                        return extracted
 
-    def _create_single_provider(self, provider_type: LLMProviderType) -> LLMProvider:
-        """Создать один провайдер."""
-        provider_class = self.PROVIDER_CLASSES.get(provider_type)
-        if not provider_class:
-            raise ValueError(f"Неизвестный провайдер: {provider_type}")
+                logger.warning("Модель вернула JSON Schema, не удалось извлечь данные")
 
-        # Используем модель из конфига если это основной провайдер
-        if provider_type == self.primary_provider and self.base_config.model != "auto":
-            model = self.base_config.model
-        else:
-            model = self.DEFAULT_MODELS.get(provider_type, "auto")
+            cleaned = {
+                k: v for k, v in data.items()
+                if k not in schema_meta_fields or k in expected_fields
+            }
 
-        config = LLMConfig(
-            provider=provider_type,
-            model=model,
-            temperature=self.base_config.temperature,
-            max_tokens=self.base_config.max_tokens,
-            timeout=self.base_config.timeout,
-        )
+            if "content_structure" in cleaned and isinstance(cleaned["content_structure"], str):
+                try:
+                    if cleaned["content_structure"].strip().startswith("{"):
+                        cleaned["content_structure"] = json.loads(cleaned["content_structure"])
+                    else:
+                        sections = cleaned["content_structure"].split(",")
+                        cleaned["content_structure"] = {
+                            "sections": [section.strip() for section in sections]
+                        }
+                except:
+                    cleaned["content_structure"] = {"raw": cleaned["content_structure"]}
 
-        return provider_class(config)
+            return cleaned
+        except Exception as e:
+            logger.error(f"Ошибка очистки данных: {e}")
+            return data
 
-    def _get_available_provider(self) -> Optional[LLMProviderType]:
-        """Получить следующий доступный провайдер."""
-        now = datetime.now()
+    def _extract_json(self, text: str) -> Optional[Dict[str, Any]]:
+        """Извлечь JSON из текстового ответа."""
+        if not text:
+            return None
 
-        for provider_type in self.provider_order:
-            if provider_type not in self.providers:
+        text = text.strip()
+
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        json_blocks = re.findall(r'```json\s*([\s\S]*?)\s*```', text, re.IGNORECASE)
+        for block in json_blocks:
+            try:
+                return json.loads(block.strip())
+            except json.JSONDecodeError:
                 continue
 
-            stats = self.stats.get(provider_type)
-            if stats and stats.cooldown_until and stats.cooldown_until > now:
-                logger.debug(f"{provider_type.value} в cooldown")
+        code_blocks = re.findall(r'```\s*([\s\S]*?)\s*```', text)
+        for block in code_blocks:
+            try:
+                return json.loads(block.strip())
+            except json.JSONDecodeError:
                 continue
 
-            return provider_type
+        start = text.find('{')
+        if start != -1:
+            brace_count = 0
+            for i in range(start, len(text)):
+                if text[i] == '{':
+                    brace_count += 1
+                elif text[i] == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        try:
+                            return json.loads(text[start:i + 1])
+                        except json.JSONDecodeError:
+                            break
 
-        # Все в cooldown — возвращаем первый доступный
-        for provider_type in self.provider_order:
-            if provider_type in self.providers:
-                return provider_type
+        try:
+            cleaned = re.sub(r'^[^{]*', '', text)
+            cleaned = re.sub(r'}[^}]*$', '}', cleaned)
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
 
         return None
 
-    def _report_error(self, provider_type: LLMProviderType, error: Exception):
-        """Зарегистрировать ошибку."""
-        stats = self.stats.setdefault(provider_type, ProviderStats())
-        stats.requests_failed += 1
-        stats.last_error = str(error)
-        stats.last_error_time = datetime.now()
+    def get_metrics(self) -> Dict[str, Any]:
+        return {
+            "provider": self.provider_name,
+            "model": self.model,
+            "requests": self._request_count,
+            "errors": self._error_count,
+        }
 
-        error_str = str(error).lower()
 
-        # Устанавливаем cooldown в зависимости от ошибки
-        if "429" in error_str or "rate limit" in error_str:
-            cooldown = self.COOLDOWN_SECONDS.get(provider_type, 60)
-            if "per-day" in error_str or "daily" in error_str:
-                cooldown = 3600  # 1 час для дневного лимита
-            stats.cooldown_until = datetime.now() + timedelta(seconds=cooldown)
-            logger.warning(f"{provider_type.value} rate limit, cooldown {cooldown}s")
-        elif "404" in error_str:
-            stats.cooldown_until = datetime.now() + timedelta(seconds=300)
-            logger.warning(f"{provider_type.value} 404 error, cooldown 5min")
-        elif "502" in error_str or "503" in error_str:
-            stats.cooldown_until = datetime.now() + timedelta(seconds=30)
-            logger.warning(f"{provider_type.value} server error, cooldown 30s")
+# =============================================================================
+# OpenRouter провайдер с автоматическим fallback и приоритизацией по задачам
+# =============================================================================
 
-    def _report_success(self, provider_type: LLMProviderType):
-        """Зарегистрировать успех."""
-        stats = self.stats.setdefault(provider_type, ProviderStats())
-        stats.requests_total += 1
-        stats.requests_success += 1
+class OpenRouterProvider(LLMProvider):
+    """
+    Провайдер OpenRouter с динамической приоритизацией моделей.
 
-    def _create_client(self) -> BaseChatModel:
-        """Получить клиент основного провайдера."""
-        provider_type = self._get_available_provider()
-        if provider_type and provider_type in self.providers:
-            return self.providers[provider_type].client
-        raise ValueError("Нет доступных провайдеров")
+    Поддерживает TaskType для автоматической сортировки:
+    - HEAVY → большие модели первые
+    - LIGHT → маленькие модели первые
+    """
+
+    def __init__(self, config: Union[Dict[str, Any], LLMConfig]):
+        super().__init__(config)
+
+        try:
+            self.api_base = self.base_url or LLMConfig.OPENROUTER_DEFAULT_URL
+            self.headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://github.com/news-aggregator",
+                "X-Title": "News Aggregator Pro"
+            }
+
+            self._discovery = OpenRouterModelDiscovery()
+            self._tracker = ModelStatusTracker()
+
+            self._fallback_count = 0
+            self._current_model = self.model
+
+            logger.info(f"OpenRouter провайдер инициализирован с моделью: {self.model}")
+        except Exception as e:
+            logger.error(f"Ошибка инициализации OpenRouter провайдера: {e}")
+            raise
 
     def generate(
             self,
             prompt: str,
             system_prompt: Optional[str] = None,
             temperature: Optional[float] = None,
-            max_tokens: Optional[int] = None
+            max_tokens: Optional[int] = None,
+            **kwargs
     ) -> str:
-        """Генерация с автоматическим fallback."""
-        last_error = None
-        attempts = 0
-        max_attempts = len(self.providers) * 2
+        """Сгенерировать текст с автоматическим fallback."""
+        return self._generate_internal(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            task_type=None
+        )
 
-        while attempts < max_attempts:
-            provider_type = self._get_available_provider()
-            if not provider_type:
-                break
-
-            provider = self.providers[provider_type]
-            attempts += 1
-
-            try:
-                logger.debug(f"Попытка {attempts}: {provider_type.value}")
-                result = provider.generate(prompt, system_prompt, temperature, max_tokens)
-                self._report_success(provider_type)
-                self._current_provider = provider_type
-                return result
-
-            except Exception as e:
-                self._report_error(provider_type, e)
-                last_error = e
-
-                # Проверяем, нужен ли fallback
-                error_str = str(e).lower()
-                if any(x in error_str for x in ["429", "rate limit", "502", "503", "404"]):
-                    logger.warning(f"{provider_type.value} ошибка, пробуем fallback...")
-                    time.sleep(1)
-                    continue
-                else:
-                    # Другие ошибки — сразу выбрасываем
-                    raise
-
-        if last_error:
-            raise last_error
-        raise Exception("Все провайдеры недоступны")
-
-    def generate_structured(
+    def generate_for_task(
             self,
             prompt: str,
-            output_schema: Type[T],
-            system_prompt: Optional[str] = None
-    ) -> T:
-        """Структурированная генерация с fallback."""
-        last_error = None
-        attempts = 0
-        max_attempts = len(self.providers) * 2
+            task_type: TaskType,
+            system_prompt: Optional[str] = None,
+            temperature: Optional[float] = None,
+            max_tokens: Optional[int] = None
+    ) -> str:
+        """
+        Генерация с учётом типа задачи.
 
-        while attempts < max_attempts:
-            provider_type = self._get_available_provider()
-            if not provider_type:
-                break
+        Args:
+            prompt: Промпт
+            task_type: Тип задачи (HEAVY, MEDIUM, LIGHT)
+            system_prompt: Системный промпт
+            temperature: Температура
+            max_tokens: Макс. токенов
 
-            provider = self.providers[provider_type]
-            attempts += 1
+        Returns:
+            Сгенерированный текст
+        """
+        return self._generate_internal(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            task_type=task_type
+        )
 
-            try:
-                logger.debug(f"Structured попытка {attempts}: {provider_type.value}")
-                result = provider.generate_structured(prompt, output_schema, system_prompt)
-                self._report_success(provider_type)
-                self._current_provider = provider_type
-                return result
+    def _generate_internal(
+            self,
+            prompt: str,
+            system_prompt: Optional[str],
+            temperature: Optional[float],
+            max_tokens: Optional[int],
+            task_type: Optional[TaskType]
+    ) -> str:
+        """Внутренний метод генерации."""
+        self._request_count += 1
 
-            except Exception as e:
-                self._report_error(provider_type, e)
-                last_error = e
+        try:
+            temp = temperature or self.config.temperature
+            tokens = max_tokens or self.config.max_tokens
 
-                error_str = str(e).lower()
-                if any(x in error_str for x in ["429", "rate limit", "502", "503", "404"]):
-                    logger.warning(f"{provider_type.value} structured ошибка, fallback...")
-                    time.sleep(1)
+            models_to_try = self._get_models_to_try(task_type=task_type)
+
+            if not models_to_try:
+                raise Exception("Нет доступных моделей - все в cooldown")
+
+            task_name = task_type.value if task_type else "default"
+            logger.info(f"🎯 [{task_name}] Попытка с {len(models_to_try)} моделями")
+
+            tried = []
+            last_error = None
+            base_delay = 1
+            max_delay = 10
+
+            for i, model_id in enumerate(models_to_try):
+                if model_id in tried:
                     continue
-                else:
-                    raise
 
-        if last_error:
-            raise last_error
-        raise Exception("Все провайдеры недоступны")
+                tried.append(model_id)
 
-    def get_current_provider(self) -> Optional[str]:
-        """Имя текущего используемого провайдера."""
-        return self._current_provider.value if self._current_provider else None
+                try:
+                    if i > 0:
+                        delay = min(base_delay * (2 ** (i - 1)), max_delay)
+                        logger.debug(f"Задержка {delay:.2f}с перед попыткой {i + 1}")
+                        time.sleep(delay)
 
-    def get_stats(self) -> Dict[str, Any]:
-        """Статистика по провайдерам."""
-        return {
-            "available": [p.value for p in self.providers.keys()],
-            "order": [p.value for p in self.provider_order if p in self.providers],
-            "current": self.get_current_provider(),
-            "stats": {
-                pt.value: {
-                    "success": s.requests_success,
-                    "failed": s.requests_failed,
-                    "in_cooldown": bool(s.cooldown_until and s.cooldown_until > datetime.now())
-                }
-                for pt, s in self.stats.items()
+                    result = self._make_request(
+                        model_id, prompt, system_prompt, temp, tokens
+                    )
+
+                    self._tracker.record_success(model_id)
+                    self._current_model = model_id
+
+                    size = self._discovery.get_model_size(model_id)
+                    logger.info(f"✅ [{task_name}] Успех: {model_id} ({size}B)")
+                    return result
+
+                except Exception as e:
+                    last_error = e
+                    error_str = str(e)
+
+                    if any(code in error_str for code in ["429", "402", "403"]):
+                        self._tracker.record_error(model_id)
+                        logger.warning(f"⚠️ {model_id} rate-limited")
+                        continue
+
+                    if any(code in error_str for code in ["500", "502", "503"]):
+                        logger.warning(f"⚠️ {model_id} server error")
+                        time.sleep(2)
+                        continue
+
+                    logger.warning(f"⚠️ {model_id}: {str(e)[:60]}")
+                    continue
+
+            self._error_count += 1
+            raise Exception(f"Все модели отказали [{task_name}]. Последняя: {last_error}")
+
+        except Exception as e:
+            self._error_count += 1
+            logger.error(f"❌ Критическая ошибка: {e}")
+            raise
+
+    def _get_models_to_try(self, task_type: Optional[TaskType] = None) -> List[str]:
+        """
+        Собрать список моделей отсортированных по приоритету для задачи.
+
+        Args:
+            task_type: Тип задачи
+                - HEAVY → большие модели первые
+                - LIGHT → маленькие модели первые
+                - MEDIUM/None → по контексту (дефолт)
+
+        Returns:
+            Список ID моделей в порядке приоритета
+        """
+        try:
+            # Определяем порядок сортировки
+            if task_type == TaskType.HEAVY:
+                ascending = False  # Большие первые
+                task_name = "HEAVY"
+            elif task_type == TaskType.LIGHT:
+                ascending = True   # Маленькие первые
+                task_name = "LIGHT"
+            else:
+                ascending = None   # По контексту
+                task_name = "MEDIUM"
+
+            # Получаем отсортированные модели
+            if ascending is not None:
+                all_models = self._discovery.get_models_sorted_by_size(ascending=ascending)
+            else:
+                all_models = self._discovery.get_free_models()
+
+            # Фильтруем доступные (не в cooldown)
+            models = []
+            for m in all_models:
+                if self._tracker.is_available(m.id):
+                    models.append(m.id)
+
+            # Логируем приоритет
+            logger.info(f"📋 [{task_name}] Модели по приоритету ({len(models)} доступно):")
+            for i, model_id in enumerate(models[:5]):
+                size = self._discovery.get_model_size(model_id)
+                logger.info(f"   {i+1}. {model_id} ({size}B)")
+            if len(models) > 5:
+                logger.info(f"   ... и ещё {len(models) - 5}")
+
+            return models
+
+        except Exception as e:
+            logger.error(f"Ошибка получения списка моделей: {e}")
+            return [self.model]
+
+    def _make_request(
+            self,
+            model: str,
+            prompt: str,
+            system_prompt: Optional[str],
+            temperature: float,
+            max_tokens: int
+    ) -> str:
+        """Выполнить HTTP запрос к API."""
+        try:
+            messages = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": prompt})
+
+            data = {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
             }
-        }
+
+            response = requests.post(
+                f"{self.api_base}/chat/completions",
+                headers=self.headers,
+                json=data,
+                timeout=180
+            )
+
+            if response.status_code != 200:
+                error_msg = f"OpenRouter {response.status_code}: {response.text[:200]}"
+                logger.error(error_msg)
+                raise Exception(error_msg)
+
+            result = response.json()
+            if "error" in result:
+                error_msg = f"Ошибка OpenRouter: {result['error']}"
+                logger.error(error_msg)
+                raise Exception(error_msg)
+
+            return result["choices"][0]["message"]["content"]
+
+        except requests.exceptions.Timeout:
+            raise Exception(f"Таймаут запроса к модели {model}")
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"Сетевая ошибка при запросе к {model}: {e}")
+        except Exception as e:
+            raise
+
+    def get_metrics(self) -> Dict[str, Any]:
+        try:
+            metrics = super().get_metrics()
+            metrics.update({
+                "current_model": self._current_model,
+                "fallbacks": self._fallback_count,
+            })
+            return metrics
+        except Exception as e:
+            logger.error(f"Ошибка получения метрик: {e}")
+            return {}
+
+    def get_available_models(self) -> List[str]:
+        try:
+            free_models = self._discovery.get_free_models()
+            return [m.id for m in free_models if self._tracker.is_available(m.id)]
+        except Exception as e:
+            logger.error(f"Ошибка получения доступных моделей: {e}")
+            return []
+
+    def print_models(self, task_type: Optional[TaskType] = None) -> None:
+        """Вывести список моделей с их статусом."""
+        try:
+            if task_type == TaskType.HEAVY:
+                models = self._discovery.get_models_sorted_by_size(ascending=False)
+                title = "HEAVY (большие первые)"
+            elif task_type == TaskType.LIGHT:
+                models = self._discovery.get_models_sorted_by_size(ascending=True)
+                title = "LIGHT (маленькие первые)"
+            else:
+                models = self._discovery.get_free_models()
+                title = "по контексту"
+
+            print(f"\n{'=' * 70}")
+            print(f"🆓 МОДЕЛИ [{title}] ({len(models)} доступно)")
+            print(f"{'=' * 70}")
+
+            for i, m in enumerate(models[:15], 1):
+                status = "✓" if self._tracker.is_available(m.id) else "⏳"
+                size = self._discovery.get_model_size(m.id)
+                ctx = f"{m.context_length // 1000}k"
+                caps = ""
+                if "vision" in m.capabilities:
+                    caps += "👁"
+                if "function_calling" in m.capabilities:
+                    caps += "🔧"
+                print(f"{i:2}. {status} {m.id:<50} {size:>3}B ctx={ctx} {caps}")
+
+            print(f"{'=' * 70}\n")
+        except Exception as e:
+            logger.error(f"Ошибка вывода моделей: {e}")
 
 
 # =============================================================================
-# Factory
+# Остальные провайдеры
+# =============================================================================
+
+class GroqProvider(LLMProvider):
+    """Провайдер Groq с OpenAI-совместимым API."""
+
+    def __init__(self, config: Union[Dict[str, Any], LLMConfig]):
+        super().__init__(config)
+        try:
+            self.api_base = self.base_url or LLMConfig.GROQ_DEFAULT_URL
+            self.headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+            logger.info("Groq провайдер инициализирован")
+        except Exception as e:
+            logger.error(f"Ошибка инициализации Groq провайдера: {e}")
+            raise
+
+    def generate(
+            self,
+            prompt: str,
+            system_prompt: Optional[str] = None,
+            temperature: Optional[float] = None,
+            max_tokens: Optional[int] = None,
+            **kwargs
+    ) -> str:
+        try:
+            self._request_count += 1
+
+            messages = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": prompt})
+
+            data = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": temperature or self.config.temperature,
+                "max_tokens": max_tokens or self.config.max_tokens,
+            }
+
+            response = requests.post(
+                f"{self.api_base}/chat/completions",
+                headers=self.headers,
+                json=data,
+                timeout=60
+            )
+
+            if response.status_code != 200:
+                error_msg = f"Ошибка Groq: {response.status_code} {response.text}"
+                logger.error(error_msg)
+                self._error_count += 1
+                raise Exception(error_msg)
+
+            return response.json()["choices"][0]["message"]["content"]
+
+        except Exception as e:
+            self._error_count += 1
+            logger.error(f"Ошибка генерации Groq: {e}")
+            raise
+
+
+class GoogleProvider(LLMProvider):
+    """Провайдер Google Gemini с нативным API."""
+
+    def __init__(self, config: Union[Dict[str, Any], LLMConfig]):
+        super().__init__(config)
+        try:
+            self.api_base = self.base_url or LLMConfig.GOOGLE_DEFAULT_URL
+            logger.info("Google провайдер инициализирован")
+        except Exception as e:
+            logger.error(f"Ошибка инициализации Google провайдера: {e}")
+            raise
+
+    def generate(
+            self,
+            prompt: str,
+            system_prompt: Optional[str] = None,
+            temperature: Optional[float] = None,
+            max_tokens: Optional[int] = None,
+            **kwargs
+    ) -> str:
+        try:
+            self._request_count += 1
+
+            url = f"{self.api_base}/models/{self.model}:generateContent?key={self.api_key}"
+
+            contents = []
+            if system_prompt:
+                contents.append({
+                    "role": "user",
+                    "parts": [{"text": f"System: {system_prompt}"}]
+                })
+                contents.append({
+                    "role": "model",
+                    "parts": [{"text": "Understood."}]
+                })
+            contents.append({
+                "role": "user",
+                "parts": [{"text": prompt}]
+            })
+
+            data = {
+                "contents": contents,
+                "generationConfig": {
+                    "temperature": temperature or self.config.temperature,
+                    "maxOutputTokens": max_tokens or self.config.max_tokens,
+                }
+            }
+
+            response = requests.post(url, json=data, timeout=120)
+
+            if response.status_code != 200:
+                error_msg = f"Ошибка Google: {response.status_code} {response.text}"
+                logger.error(error_msg)
+                self._error_count += 1
+                raise Exception(error_msg)
+
+            result = response.json()
+            if "candidates" not in result:
+                raise Exception(f"Google не вернул кандидатов: {result}")
+
+            return result["candidates"][0]["content"]["parts"][0]["text"]
+
+        except Exception as e:
+            self._error_count += 1
+            logger.error(f"Ошибка генерации Google: {e}")
+            raise
+
+
+class OllamaProvider(LLMProvider):
+    """Провайдер Ollama для локальных моделей."""
+
+    def __init__(self, config: Union[Dict[str, Any], LLMConfig]):
+        super().__init__(config)
+        try:
+            self.api_base = self.base_url or LLMConfig.OLLAMA_DEFAULT_URL
+            # Модель уже должна быть корректно заполнена через LLMConfig/ModelsConfig.
+            # Fallback на env только если config.model пуст.
+            self.model = self.config.model or os.getenv("OLLAMA_MODEL", "glm-4.7-flash:q4_K_M")
+            logger.info(f"Ollama провайдер инициализирован с моделью: {self.model}")
+        except Exception as e:
+            logger.error(f"Ошибка инициализации Ollama провайдера: {e}")
+            raise
+
+    def generate(
+            self,
+            prompt: str,
+            system_prompt: Optional[str] = None,
+            temperature: Optional[float] = None,
+            max_tokens: Optional[int] = None,
+            **kwargs
+    ) -> str:
+        try:
+            self._request_count += 1
+
+            full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
+
+            data = {
+                "model": self.model,
+                "prompt": full_prompt,
+                "options": {
+                    "temperature": temperature or self.config.temperature,
+                    "num_predict": max_tokens or self.config.max_tokens,
+                },
+                "stream": False
+            }
+
+            response = requests.post(
+                f"{self.api_base}/api/generate",
+                json=data,
+                timeout=3600
+            )
+
+            if response.status_code != 200:
+                error_msg = f"Ошибка Ollama: {response.status_code} {response.text}"
+                logger.error(error_msg)
+                self._error_count += 1
+                raise Exception(error_msg)
+
+            return response.json()["response"]
+
+        except Exception as e:
+            self._error_count += 1
+            logger.error(f"Ошибка генерации Ollama: {e}")
+            raise
+
+
+# =============================================================================
+# Фабрика провайдеров
 # =============================================================================
 
 class LLMProviderFactory:
-    """Фабрика LLM провайдеров."""
+    """Фабрика для создания LLM провайдеров."""
 
     _providers = {
-        LLMProviderType.OLLAMA: OllamaProvider,
-        LLMProviderType.OPENROUTER: OpenRouterProvider,
-        LLMProviderType.GROQ: GroqProvider,
-        LLMProviderType.GOOGLE: GoogleProvider,
-        LLMProviderType.HUGGINGFACE: HuggingFaceProvider,
+        "groq": GroqProvider,
+        "openrouter": OpenRouterProvider,
+        "google": GoogleProvider,
+        "ollama": OllamaProvider,
     }
 
     @classmethod
-    def create(cls, config: LLMConfig) -> LLMProvider:
-        """Создать провайдер."""
-        # AUTO = MultiProvider
-        if config.provider == LLMProviderType.AUTO:
-            return MultiProviderWrapper(config, primary_provider=None)
+    def create(cls, config: Union[Dict[str, Any], LLMConfig]) -> LLMProvider:
+        try:
+            if isinstance(config, dict):
+                config = LLMConfig.from_dict(config)
 
-        # Конкретный провайдер с fallback
-        if config.use_fallback and config.provider in [
-            LLMProviderType.GROQ,
-            LLMProviderType.GOOGLE,
-            LLMProviderType.OPENROUTER,
-            LLMProviderType.HUGGINGFACE
-        ]:
-            return MultiProviderWrapper(config, primary_provider=config.provider)
+            provider_name = config.provider.value
 
-        # Без fallback (Ollama или явный запрос)
-        provider_class = cls._providers.get(config.provider)
-        if not provider_class:
-            raise ValueError(f"Неподдерживаемый провайдер: {config.provider}")
+            if provider_name not in cls._providers:
+                raise ValueError(f"Неизвестный провайдер: {provider_name}")
 
-        logger.info(f"Создание провайдера: {config.provider.value}, model={config.model}")
-        return provider_class(config)
+            return cls._providers[provider_name](config)
+        except Exception as e:
+            logger.error(f"Ошибка создания провайдера: {e}")
+            raise
 
+    @classmethod
+    def create_auto(
+            cls,
+            provider: str = "openrouter",
+            min_context: int = 4000,
+            max_tokens: int = 4096,
+            temperature: float = 0.7
+    ) -> LLMProvider:
+        try:
+            if provider == "openrouter":
+                discovery = OpenRouterModelDiscovery()
+                best_model = discovery.get_best_model(min_context=min_context)
 
-def get_llm_provider(
-        provider: str = "auto",
-        model: Optional[str] = None,
-        api_key: Optional[str] = None,
-        use_fallback: bool = True,
-        **kwargs
-) -> LLMProvider:
-    """
-    Создать LLM провайдер.
+                if best_model:
+                    model_id = best_model.id
+                    logger.info(f"Авто-выбрана модель: {model_id} (контекст: {best_model.context_length})")
+                else:
+                    model_id = "meta-llama/llama-3.1-8b-instruct:free"
+                    logger.warning(f"Модели не найдены, используем fallback: {model_id}")
 
-    Args:
-        provider: Провайдер ("auto", "groq", "google", "openrouter", "huggingface", "ollama")
-        model: Модель (опционально)
-        api_key: API ключ (опционально, берётся из env)
-        use_fallback: Использовать fallback на другие провайдеры (default: True)
-        **kwargs: Дополнительные параметры
+                config = LLMConfig(
+                    provider=LLMProviderType.OPENROUTER,
+                    model=model_id,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    api_key=os.getenv("OPENROUTER_API_KEY"),
+                    context_length=best_model.context_length if best_model else 131072,
+                )
+            else:
+                # Модель определяется через env → разумный дефолт (без хардкода qwen)
+                env_models = {
+                    "groq": os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
+                    "google": os.getenv("GOOGLE_MODEL", "gemini-1.5-flash"),
+                    "ollama": os.getenv("OLLAMA_MODEL", "glm-4.7-flash:q4_K_M"),
+                }
 
-    Returns:
-        LLM провайдер
+                config = LLMConfig(
+                    provider=LLMProviderType(provider),
+                    model=env_models.get(provider, "glm-4.7-flash:q4_K_M"),
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    api_key=os.getenv(f"{provider.upper()}_API_KEY"),
+                )
 
-    Examples:
-        >>> # Автоматический выбор с fallback
-        >>> llm = get_llm_provider("auto")
+            return cls.create(config)
+        except Exception as e:
+            logger.error(f"Ошибка создания авто-провайдера: {e}")
+            raise
 
-        >>> # Groq как основной, остальные как fallback
-        >>> llm = get_llm_provider("groq")
-
-        >>> # Groq без fallback
-        >>> llm = get_llm_provider("groq", use_fallback=False)
-
-        >>> # OpenRouter с конкретной моделью
-        >>> llm = get_llm_provider("openrouter", model="meta-llama/llama-3.3-70b-instruct:free")
-    """
-    provider_type = LLMProviderType(provider.lower())
-
-    # Дефолтные модели
-    default_models = {
-        LLMProviderType.OLLAMA: "qwen2.5:14b-instruct-q5_k_m",
-        LLMProviderType.OPENROUTER: "meta-llama/llama-3.3-70b-instruct:free",
-        LLMProviderType.GROQ: "llama-3.1-70b-versatile",
-        LLMProviderType.GOOGLE: "gemini-1.5-flash",
-        LLMProviderType.HUGGINGFACE: "mistralai/Mistral-7B-Instruct-v0.3",
-        LLMProviderType.AUTO: "auto",
-    }
-
-    if not model:
-        model = default_models.get(provider_type, "auto")
-
-    config = LLMConfig(
-        provider=provider_type,
-        model=model,
-        api_key=api_key,
-        use_fallback=use_fallback,
-        **kwargs
-    )
-
-    return LLMProviderFactory.create(config)
+    @classmethod
+    def available_providers(cls) -> List[str]:
+        return list(cls._providers.keys())
 
 
 # =============================================================================
-# CLI Test
+# Вспомогательные функции
+# =============================================================================
+
+def get_free_models(min_context: int = 4000) -> List[FreeModel]:
+    """Получить список бесплатных моделей OpenRouter."""
+    try:
+        discovery = OpenRouterModelDiscovery()
+        return discovery.get_free_models(min_context=min_context)
+    except Exception as e:
+        logger.error(f"Ошибка получения бесплатных моделей: {e}")
+        return []
+
+
+def print_free_models(task_type: Optional[TaskType] = None) -> None:
+    """Вывести список бесплатных моделей OpenRouter."""
+    try:
+        discovery = OpenRouterModelDiscovery()
+
+        if task_type == TaskType.HEAVY:
+            models = discovery.get_models_sorted_by_size(ascending=False)
+            title = "HEAVY - большие первые"
+        elif task_type == TaskType.LIGHT:
+            models = discovery.get_models_sorted_by_size(ascending=True)
+            title = "LIGHT - маленькие первые"
+        else:
+            models = discovery.get_free_models()
+            title = "по контексту"
+
+        print(f"\n{'=' * 70}")
+        print(f"🆓 БЕСПЛАТНЫЕ МОДЕЛИ [{title}] ({len(models)} найдено)")
+        print(f"{'=' * 70}")
+
+        for i, m in enumerate(models[:20], 1):
+            size = discovery.get_model_size(m.id)
+            ctx = f"{m.context_length // 1000}k" if m.context_length >= 1000 else str(m.context_length)
+            caps = ""
+            if "vision" in m.capabilities:
+                caps += "👁"
+            if "function_calling" in m.capabilities:
+                caps += "🔧"
+            print(f"{i:2}. {m.id:<55} {size:>3}B ctx={ctx:<6} {caps}")
+
+        print(f"{'=' * 70}\n")
+    except Exception as e:
+        logger.error(f"Ошибка вывода моделей: {e}")
+
+
+# =============================================================================
+# CLI для тестирования
 # =============================================================================
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-
-    print("=" * 60)
-    print("Multi-Provider LLM Test")
-    print("=" * 60)
+    import sys
 
     try:
-        # Тест auto
-        print("\n1. Тест AUTO провайдера:")
-        llm = get_llm_provider("auto")
-        if hasattr(llm, 'get_stats'):
-            print(f"   Доступные: {llm.get_stats()['available']}")
+        print("\n=== HEAVY (большие модели первые) ===")
+        print_free_models(TaskType.HEAVY)
 
-        response = llm.generate("Скажи 'привет' одним словом")
-        print(f"   Ответ: {response}")
-        if hasattr(llm, 'get_current_provider'):
-            print(f"   Использован: {llm.get_current_provider()}")
+        print("\n=== LIGHT (маленькие модели первые) ===")
+        print_free_models(TaskType.LIGHT)
 
+        if len(sys.argv) > 1 and sys.argv[1] == "--test":
+            print("\n🧪 Тестируем...")
+
+            try:
+                provider = LLMProviderFactory.create_auto(min_context=8000)
+                print(f"Выбрана: {provider.model}")
+
+                response = provider.generate("Скажи 'Привет мир' ровно двумя словами.")
+                print(f"Ответ: {response}")
+            except Exception as e:
+                print(f"Ошибка: {e}")
     except Exception as e:
-        print(f"Ошибка: {e}")
+        logger.error(f"Критическая ошибка: {e}")
