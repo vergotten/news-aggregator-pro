@@ -84,7 +84,11 @@ class Settings(BaseSettings):
     directus_admin_password: str = "admin"
     directus_key: str = "replace-with-random-value-in-production"
     directus_secret: str = "replace-with-another-random-value"
-    
+
+    # N8n Integration
+    N8N_API_URL: str = "http://localhost:5678"
+    N8N_API_KEY: str = ""
+
     # ==========================================================================
     # App Settings
     # ==========================================================================
