@@ -1,6 +1,17 @@
 #!/usr/bin/env python3
 """
-Полный конвейер обработки статей
+Полный конвейер обработки статей v3.2
+
+Два режима получения статей:
+  1) Массовый (по умолчанию) — src.scrapers + async DB (требует asyncpg)
+  2) --url — standalone парсинг + psycopg2 (без asyncpg)
+
+AI-обработка (фаза 3+) работает одинаково в обоих режимах.
+
+Изменения v3.2:
+- --url для обработки конкретных статей по ссылке
+- --url режим не требует asyncpg (standalone парсер + psycopg2)
+- Поддержка нескольких URL через запятую или повтор --url
 """
 import asyncio
 import signal
@@ -10,6 +21,7 @@ import logging
 import os
 import json
 import hashlib
+import re
 import psutil
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Tuple, Set
@@ -20,22 +32,18 @@ from dataclasses import dataclass, field, asdict
 from enum import Enum
 from pathlib import Path
 import aiofiles
+import aiohttp
+from bs4 import BeautifulSoup
 
 try:
     from tqdm import tqdm
-
     HAS_TQDM = True
 except ImportError:
     HAS_TQDM = False
 
-# Импорты приложения (без дублирующих определений)
-from src.scrapers.habr.scraper_service import HabrScraperService
-from src.application.ai_services.orchestrator import AIOrchestrator
-from src.infrastructure.ai.qdrant_client import QdrantService
-from src.infrastructure.config.database import AsyncSessionLocal
-from src.infrastructure.persistence.article_repository_impl import ArticleRepositoryImpl
-from src.domain.value_objects.source_type import SourceType
-from src.domain.entities.article import Article
+# =========================================================================
+# Эти импорты НЕ тянут asyncpg — они нужны в обоих режимах
+# =========================================================================
 from src.config.models_config import (
     get_models_config,
     reset_models_config,
@@ -46,8 +54,6 @@ from src.config.models_config import (
     CacheConfig,
     MonitoringConfig
 )
-from src.infrastructure.telegram.telegraph_publisher import TelegraphPublisher
-from src.infrastructure.telegram.telegram_publisher import TelegramPublisher
 
 # Настройка логирования
 logging.basicConfig(
@@ -58,58 +64,284 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def parse_datetime(value: Any) -> Optional[datetime]:
-    """
-    Безопасно конвертировать значение в datetime.
+# =========================================================================
+# Standalone Habr парсер (для --url режима, без src.scrapers и asyncpg)
+# Логика идентична HabrScraperService._parse_full_article()
+# =========================================================================
 
-    Args:
-        value: Строка ISO, datetime объект или None
+HABR_BASE_URL = "https://habr.com"
+HABR_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+}
 
-    Returns:
-        datetime объект или None
-    """
-    if value is None:
+
+def _extract_content_text(article_body) -> str:
+    if not article_body:
+        return ""
+    for tag in article_body.find_all(['script', 'style']):
+        tag.decompose()
+    text = article_body.get_text(separator='\n', strip=True)
+    return re.sub(r'\n{3,}', '\n\n', text).strip()
+
+
+def _normalize_image_url(url: str) -> Optional[str]:
+    if not url:
+        return None
+    url = url.strip()
+    if url.startswith('//'):
+        url = 'https:' + url
+    elif url.startswith('/'):
+        url = HABR_BASE_URL + url
+    if not url.startswith('http'):
+        return None
+    return url
+
+
+def _get_best_image_url(img_tag) -> Optional[str]:
+    if not img_tag:
+        return None
+    for attr in ('data-src', 'srcset', 'src'):
+        val = img_tag.get(attr)
+        if not val:
+            continue
+        if attr == 'srcset':
+            parts = val.split(',')
+            if parts:
+                val = parts[-1].strip().split()[0]
+        return _normalize_image_url(val)
+    return None
+
+
+def _extract_all_images(article_body) -> List[str]:
+    if not article_body:
+        return []
+    images, seen = [], set()
+    for figure in article_body.find_all('figure'):
+        img = figure.find('img')
+        if img:
+            url = _get_best_image_url(img)
+            if url and url not in seen:
+                images.append(url)
+                seen.add(url)
+    for img in article_body.find_all('img'):
+        if img.find_parent('figure'):
+            continue
+        url = _get_best_image_url(img)
+        if url and url not in seen:
+            images.append(url)
+            seen.add(url)
+    return images
+
+
+async def parse_habr_article(url: str) -> Optional[Dict]:
+    """Standalone парсинг одной статьи Habr без src.* зависимостей."""
+    try:
+        async with aiohttp.ClientSession(headers=HABR_HEADERS) as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                if response.status != 200:
+                    logger.warning(f"HTTP {response.status}: {url}")
+                    return None
+                html = await response.text()
+
+        soup = BeautifulSoup(html, 'html.parser')
+
+        title_elem = soup.find('h1', class_='tm-title') or soup.find('h1', class_='tm-article-snippet__title')
+        title = title_elem.find('span').text.strip() if title_elem else "Untitled"
+
+        author_elem = soup.find('a', class_='tm-user-info__username')
+        author = author_elem.text.strip() if author_elem else None
+
+        time_elem = soup.find('time')
+        published_at = None
+        if time_elem and time_elem.get('datetime'):
+            try:
+                published_at = datetime.fromisoformat(time_elem['datetime'])
+            except Exception:
+                published_at = datetime.utcnow()
+        else:
+            published_at = datetime.utcnow()
+
+        hubs = []
+        for hub_elem in soup.find_all('a', class_='tm-publication-hub__link'):
+            hub_span = hub_elem.find('span')
+            if hub_span:
+                hubs.append(hub_span.text.strip())
+
+        article_body = soup.find('div', class_='tm-article-body') or soup.find('div', class_='article-formatted-body')
+        if not article_body:
+            logger.warning(f"Контент не найден: {url}")
+            return None
+
+        return {
+            'title': title,
+            'content': _extract_content_text(article_body),
+            'url': url,
+            'author': author,
+            'published_at': published_at,
+            'tags': hubs.copy(),
+            'hubs': hubs,
+            'images': _extract_all_images(article_body),
+        }
+    except Exception as e:
+        logger.error(f"Ошибка парсинга {url}: {e}")
         return None
 
+
+# =========================================================================
+# psycopg2-based DB functions (для --url режима, без asyncpg)
+# =========================================================================
+
+def _get_db_connection_string() -> str:
+    """Connection string из env (аналогично Settings, но без импорта src.*)."""
+    db_url = os.getenv('DATABASE_URL')
+    if db_url:
+        return db_url.replace('postgresql+asyncpg://', 'postgresql://')
+    user = os.getenv('POSTGRES_USER', 'newsaggregator')
+    password = os.getenv('POSTGRES_PASSWORD', 'changeme123')
+    host = os.getenv('POSTGRES_HOST', 'localhost')
+    port = os.getenv('POSTGRES_PORT', '5433')
+    db = os.getenv('POSTGRES_DB', 'news_aggregator')
+    return f"postgresql://{user}:{password}@{host}:{port}/{db}"
+
+
+def _get_existing_urls_sync(urls: List[str]) -> Set[str]:
+    """Проверить какие URL уже в БД (psycopg2)."""
+    import psycopg2
+    try:
+        conn = psycopg2.connect(_get_db_connection_string())
+        cur = conn.cursor()
+        cur.execute("SELECT url FROM articles WHERE url = ANY(%s)", (urls,))
+        existing = {row[0] for row in cur.fetchall()}
+        cur.close()
+        conn.close()
+        return existing
+    except Exception as e:
+        logger.warning(f"Не удалось проверить дубликаты в БД: {e}")
+        return set()
+
+
+def _save_article_sync(article_data: Dict, metadata: Optional[Dict] = None) -> Optional[str]:
+    """
+    Сохранить одну статью в БД через psycopg2.
+
+    Returns:
+        article_id если сохранена, None если дубликат/ошибка
+    """
+    import psycopg2
+    try:
+        conn = psycopg2.connect(_get_db_connection_string())
+        cur = conn.cursor()
+        article_id = str(uuid.uuid4())
+        now = datetime.utcnow()
+
+        pub_at = article_data.get('published_at')
+        if isinstance(pub_at, datetime):
+            pub_at = pub_at.isoformat()
+
+        cur.execute("""
+            INSERT INTO articles (
+                id, title, content, url, source,
+                author, published_at, tags, hubs, images,
+                status, created_at, updated_at, article_metadata
+            ) VALUES (
+                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s
+            )
+            ON CONFLICT (url) DO NOTHING
+        """, (
+            article_id,
+            article_data['title'],
+            article_data.get('content', ''),
+            article_data['url'],
+            'habr',
+            article_data.get('author'),
+            pub_at,
+            article_data.get('tags', []),
+            article_data.get('hubs', []),
+            article_data.get('images', []),
+            'pending',
+            now,
+            now,
+            json.dumps(metadata or {}, ensure_ascii=False),
+        ))
+
+        saved = cur.rowcount > 0
+        conn.commit()
+        cur.close()
+        conn.close()
+        return article_id if saved else None
+
+    except Exception as e:
+        logger.error(f"DB ошибка: {e}")
+        return None
+
+
+def _update_article_sync(article_id: str, updates: Dict[str, Any]):
+    """Обновить поля статьи в БД через psycopg2."""
+    import psycopg2
+    if not updates:
+        return
+    try:
+        conn = psycopg2.connect(_get_db_connection_string())
+        cur = conn.cursor()
+
+        set_parts = []
+        values = []
+        for key, value in updates.items():
+            set_parts.append(f"{key} = %s")
+            if isinstance(value, (dict, list)):
+                values.append(json.dumps(value, ensure_ascii=False))
+            else:
+                values.append(value)
+
+        set_parts.append("updated_at = %s")
+        values.append(datetime.utcnow())
+        values.append(article_id)
+
+        sql = f"UPDATE articles SET {', '.join(set_parts)} WHERE id = %s"
+        cur.execute(sql, values)
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logger.warning(f"DB update ошибка для {article_id}: {e}")
+
+
+# =========================================================================
+# Общие утилиты (без зависимости от src.*)
+# =========================================================================
+
+def parse_datetime(value: Any) -> Optional[datetime]:
+    """Безопасно конвертировать значение в datetime."""
+    if value is None:
+        return None
     if isinstance(value, datetime):
         return value
-
     if isinstance(value, str):
         try:
             value = value.strip()
-
-            # Заменяем Z на +00:00
             if value.endswith('Z'):
                 value = value[:-1] + '+00:00'
-
-            # Пробуем fromisoformat (Python 3.7+)
             try:
                 return datetime.fromisoformat(value)
             except ValueError:
                 pass
-
-            # Пробуем разные форматы
             for fmt in [
-                '%Y-%m-%dT%H:%M:%S%z',
-                '%Y-%m-%dT%H:%M:%S.%f%z',
-                '%Y-%m-%dT%H:%M:%S',
-                '%Y-%m-%dT%H:%M:%S.%f',
-                '%Y-%m-%d %H:%M:%S',
-                '%Y-%m-%d',
+                '%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%S.%f%z',
+                '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M:%S.%f',
+                '%Y-%m-%d %H:%M:%S', '%Y-%m-%d',
             ]:
                 try:
                     return datetime.strptime(value, fmt)
                 except ValueError:
                     continue
-
         except Exception as e:
             logger.warning(f"Не удалось распарсить дату '{value}': {e}")
-
     return None
 
 
 class PipelineStatus(Enum):
-    """Статусы выполнения конвейера."""
     INITIALIZING = "initializing"
     PARSING = "parsing"
     VALIDATING = "validating"
@@ -123,21 +355,18 @@ class PipelineStatus(Enum):
 
 @dataclass
 class SystemMetrics:
-    """Метрики системы."""
     cpu_percent: float = 0.0
     memory_percent: float = 0.0
     memory_used_mb: float = 0.0
     disk_usage_percent: float = 0.0
     network_io: Dict[str, int] = field(default_factory=dict)
     timestamp: float = field(default_factory=time.time)
-
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
 
 @dataclass
 class PipelineMetrics:
-    """Метрики производительности конвейера."""
     start_time: float = field(default_factory=time.time)
     end_time: Optional[float] = None
     total_scraped: int = 0
@@ -162,109 +391,61 @@ class PipelineMetrics:
 
     @property
     def duration(self) -> float:
-        """Длительность выполнения в секундах."""
-        if self.end_time:
-            return self.end_time - self.start_time
-        return time.time() - self.start_time
-
+        return (self.end_time or time.time()) - self.start_time
     @property
     def avg_processing_time(self) -> float:
-        """Среднее время обработки одной статьи."""
-        if not self.processing_times:
-            return 0.0
-        return sum(self.processing_times) / len(self.processing_times)
-
+        return sum(self.processing_times) / len(self.processing_times) if self.processing_times else 0.0
     @property
     def success_rate(self) -> float:
-        """Процент успешной обработки."""
-        if self.total_scraped == 0:
-            return 0.0
-        return (self.processed / self.total_scraped) * 100
-
+        return (self.processed / self.total_scraped * 100) if self.total_scraped else 0.0
     @property
     def cache_hit_rate(self) -> float:
-        """Процент попаданий в кэш."""
         total = self.cache_hits + self.cache_misses
-        if total == 0:
-            return 0.0
-        return (self.cache_hits / total) * 100
+        return (self.cache_hits / total * 100) if total else 0.0
 
     def add_system_metrics(self):
-        """Добавить текущие метрики системы."""
         try:
-            metrics = SystemMetrics(
+            self.system_metrics.append(SystemMetrics(
                 cpu_percent=psutil.cpu_percent(),
                 memory_percent=psutil.virtual_memory().percent,
                 memory_used_mb=psutil.virtual_memory().used / 1024 / 1024,
                 disk_usage_percent=psutil.disk_usage('/').percent,
                 network_io=dict(psutil.net_io_counters()._asdict()) if psutil.net_io_counters() else {}
-            )
-            self.system_metrics.append(metrics)
+            ))
         except Exception as e:
-            logger.warning(f"Ошибка сбора системных метрик: {e}")
+            logger.warning(f"Ошибка сбора метрик: {e}")
 
     def to_dict(self) -> Dict[str, Any]:
-        """Преобразование в словарь для логирования."""
         return {
-            "correlation_id": self.correlation_id,
-            "status": self.status.value,
-            "mode": self.mode.value,
-            "duration_seconds": self.duration,
-            "total_scraped": self.total_scraped,
-            "processed": self.processed,
-            "saved_to_db": self.saved_to_db,
-            "saved_to_qdrant": self.saved_to_qdrant,
+            "correlation_id": self.correlation_id, "status": self.status.value,
+            "mode": self.mode.value, "duration_seconds": self.duration,
+            "total_scraped": self.total_scraped, "processed": self.processed,
+            "saved_to_db": self.saved_to_db, "saved_to_qdrant": self.saved_to_qdrant,
             "published_to_telegraph": self.published_to_telegraph,
             "sent_to_telegram": self.sent_to_telegram,
-            "low_relevance": self.low_relevance,
-            "errors": self.errors,
-            "warnings": self.warnings,
-            "avg_processing_time": self.avg_processing_time,
-            "success_rate": self.success_rate,
-            "cache_hit_rate": self.cache_hit_rate,
-            "retry_counts": self.retry_counts,
-            "failed_urls": list(self.failed_urls),
+            "low_relevance": self.low_relevance, "errors": self.errors,
+            "warnings": self.warnings, "avg_processing_time": self.avg_processing_time,
+            "success_rate": self.success_rate, "cache_hit_rate": self.cache_hit_rate,
+            "retry_counts": self.retry_counts, "failed_urls": list(self.failed_urls),
             "system_metrics": [m.to_dict() for m in self.system_metrics[-10:]]
         }
-
-
-class PipelineInterrupted(Exception):
-    """Исключение для прерывания конвейера."""
-    pass
 
 
 class PipelineConfig:
     """Конфигурация конвейера с валидацией."""
 
-    def __init__(
-            self,
-            limit: int = 10,
-            hubs: str = "",
-            verbose: bool = False,
-            min_relevance: int = 5,
-            debug: bool = False,
-            provider: Optional[str] = None,
-            strategy: Optional[str] = None,
-            no_fallback: bool = False,
-            max_retries: int = 3,
-            retry_delay: float = 1.0,
-            max_concurrent: int = 5,
-            batch_size: int = 10,
-            timeout: float = 300.0,
-            mode: OperationMode = OperationMode.NORMAL,
-            retry_strategy: RetryStrategy = RetryStrategy.EXPONENTIAL,
-            enable_cache: bool = True,
-            cache_dir: str = "cache/pipeline",
-            enable_monitoring: bool = True,
-            monitoring_interval: float = 30.0,
-            save_failed_urls: bool = True,
-            duplicate_check: bool = True,
-            rate_limit: Optional[int] = None,
-            health_check_interval: float = 60.0,
-            publish_telegraph: bool = False,
-            min_publish_score: int = 5,
-            publish_telegram: bool = False
-    ):
+    def __init__(self, *, limit=10, hubs="", verbose=False, min_relevance=5,
+                 debug=False, provider=None, strategy=None, no_fallback=False,
+                 max_retries=3, retry_delay=1.0, max_concurrent=5, batch_size=10,
+                 timeout=300.0, mode=OperationMode.NORMAL,
+                 retry_strategy=RetryStrategy.EXPONENTIAL,
+                 enable_cache=True, cache_dir="cache/pipeline",
+                 enable_monitoring=True, monitoring_interval=30.0,
+                 save_failed_urls=True, duplicate_check=True,
+                 rate_limit=None, health_check_interval=60.0,
+                 publish_telegraph=False, min_publish_score=5,
+                 publish_telegram=False, urls=None):
+
         self.limit = max(1, limit)
         self.hubs = hubs
         self.verbose = verbose
@@ -273,21 +454,17 @@ class PipelineConfig:
         self.publish_telegraph = publish_telegraph
         self.publish_telegram = publish_telegram
         self.min_publish_score = max(1, min(10, min_publish_score))
+        self.urls = urls or []
 
-        # Определяем провайдера: приоритет env > аргумент > default
+        # Провайдер: env > аргумент > default
         env_provider = os.getenv("LLM_PROVIDER")
         if env_provider:
             self.provider = env_provider
-            if provider and provider != env_provider:
-                logger.info(f"Провайдер из LLM_PROVIDER={env_provider} (аргумент --provider={provider} игнорирован)")
-            else:
-                logger.info(f"Провайдер из LLM_PROVIDER: {env_provider}")
         elif provider:
             self.provider = provider
-            logger.info(f"Провайдер из аргумента: {provider}")
         else:
             self.provider = "openrouter"
-            logger.info(f"Провайдер по умолчанию: {self.provider}")
+        logger.info(f"Провайдер: {self.provider}")
 
         self.strategy = strategy
         self.no_fallback = no_fallback
@@ -307,1149 +484,792 @@ class PipelineConfig:
         self.rate_limit = rate_limit
         self.health_check_interval = health_check_interval
 
-        # Валидация провайдера
         if self.provider and self.provider not in ['groq', 'openrouter', 'google', 'ollama']:
             raise ValueError(f"Неподдерживаемый провайдер: {self.provider}")
-
-        # Валидация стратегии
         if self.strategy and self.strategy not in ['cost_optimized', 'balanced', 'quality_focused', 'speed_focused']:
             raise ValueError(f"Неподдерживаемая стратегия: {self.strategy}")
-
-        # Создаём директорию кэша
         if self.enable_cache:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
 
+    @property
+    def is_url_mode(self) -> bool:
+        return bool(self.urls)
+
     def get_hubs_list(self) -> List[str]:
-        """Получить список хабов."""
         return [h.strip() for h in self.hubs.split(',')] if self.hubs else []
 
     def get_cache_path(self, key: str) -> Path:
-        """Получить путь к файлу кэша."""
         return self.cache_dir / f"{key}.json"
 
     def calculate_retry_delay(self, attempt: int) -> float:
-        """Рассчитать задержку для повторной попытки."""
         if self.retry_strategy == RetryStrategy.EXPONENTIAL:
             return self.retry_delay * (2 ** attempt)
         elif self.retry_strategy == RetryStrategy.LINEAR:
             return self.retry_delay * (attempt + 1)
         elif self.retry_strategy == RetryStrategy.ADAPTIVE:
-            base_delay = self.retry_delay * (attempt + 1)
-            error_factor = min(2.0, 1.0 + (attempt * 0.1))
-            return base_delay * error_factor
-        else:  # FIXED
-            return self.retry_delay
+            return self.retry_delay * (attempt + 1) * min(2.0, 1.0 + attempt * 0.1)
+        return self.retry_delay
 
 
-def format_section_header(title: str, char: str = "=", width: int = 80) -> str:
-    return f"\n{char * width}\n{title}\n{char * width}"
+# =========================================================================
+# Форматирование вывода
+# =========================================================================
+
+def fmt_header(title, char="=", w=80):
+    return f"\n{char * w}\n{title}\n{char * w}"
+
+def fmt_sub(title, w=80):
+    return f"\n{'-' * w}\n{title}\n{'-' * w}"
+
+def fmt_row(label, value, w=80):
+    l = f"  {label}:"
+    v = str(value)
+    return f"{l}{' ' * (w - len(l) - len(v))}{v}"
 
 
-def format_subsection(title: str, width: int = 80) -> str:
-    return f"\n{'-' * width}\n{title}\n{'-' * width}"
-
-
-def format_table_row(label: str, value: Any, width: int = 80) -> str:
-    label_str = f"  {label}:"
-    value_str = str(value)
-    dots = width - len(label_str) - len(value_str)
-    return f"{label_str}{' ' * dots}{value_str}"
-
-
-def create_article_from_data(data: Dict[str, Any]) -> Article:
-    """Создать объект Article из словаря данных парсера."""
-    # Парсим дату публикации из строки в datetime
-    published_at = parse_datetime(data.get('published_at'))
-
-    return Article(
-        id=uuid.uuid4(),
-        title=data.get('title', ''),
-        content=data.get('content', ''),
-        url=data.get('url', ''),
-        source=SourceType.HABR,
-        author=data.get('author'),
-        published_at=published_at,  # Теперь это datetime или None
-        tags=data.get('tags', []),
-        hubs=data.get('hubs', [])
-    )
-
-
-def get_article_hash(article_data: Dict[str, Any]) -> str:
-    """Получить хэш статьи для проверки дубликатов."""
-    content = f"{article_data.get('title', '')}{article_data.get('content', '')}{article_data.get('url', '')}"
+def get_article_hash(data: Dict[str, Any]) -> str:
+    content = f"{data.get('title', '')}{data.get('content', '')}{data.get('url', '')}"
     return hashlib.md5(content.encode()).hexdigest()
 
 
-async def load_cache(cache_path: Path) -> Optional[Dict[str, Any]]:
-    """Загрузить данные из кэша."""
-    if not cache_path.exists():
+async def load_cache(path: Path) -> Optional[Dict]:
+    if not path.exists():
         return None
     try:
-        async with aiofiles.open(cache_path, 'r', encoding='utf-8') as f:
-            content = await f.read()
-            return json.loads(content)
-    except Exception as e:
-        logger.warning(f"Ошибка загрузки кэша {cache_path}: {e}")
+        async with aiofiles.open(path, 'r', encoding='utf-8') as f:
+            return json.loads(await f.read())
+    except Exception:
         return None
 
 
-async def save_cache(cache_path: Path, data: Dict[str, Any]):
-    """Сохранить данные в кэш с поддержкой сериализации сложных типов."""
+async def save_cache(path: Path, data: Dict):
     try:
-        def default_serializer(obj):
-            if isinstance(obj, datetime):
-                return obj.isoformat()
-            elif isinstance(obj, set):
-                return list(obj)
-            elif isinstance(obj, Path):
-                return str(obj)
+        def ser(obj):
+            if isinstance(obj, datetime): return obj.isoformat()
+            if isinstance(obj, set): return list(obj)
+            if isinstance(obj, Path): return str(obj)
             raise TypeError(f"Type {type(obj).__name__} not serializable")
-
-        async with aiofiles.open(cache_path, 'w', encoding='utf-8') as f:
-            await f.write(json.dumps(
-                data,
-                ensure_ascii=False,
-                indent=2,
-                default=default_serializer
-            ))
+        async with aiofiles.open(path, 'w', encoding='utf-8') as f:
+            await f.write(json.dumps(data, ensure_ascii=False, indent=2, default=ser))
     except Exception as e:
-        logger.warning(f"Ошибка сохранения кэша {cache_path}: {e}")
+        logger.warning(f"Ошибка кэша: {e}")
 
 
-async def check_llm_provider(config: PipelineConfig, metrics: PipelineMetrics) -> bool:
-    """Проверить доступность LLM провайдера с повторными попытками."""
-    provider_name = config.provider
-    if not provider_name:
-        logger.error(f"[{metrics.correlation_id}] Провайдер не указан")
-        return False
-
-    logger.info(f"[{metrics.correlation_id}] Проверка LLM провайдера: {provider_name.upper()}")
-
-    for attempt in range(config.max_retries + 1):
-        try:
-            # Проверка API ключей
-            api_key_checks = {
-                "openrouter": ("OPENROUTER_API_KEY", "sk-or-"),
-                "groq": ("GROQ_API_KEY", "gsk_"),
-                "google": ("GOOGLE_API_KEY", "AIza"),
-            }
-            if provider_name in api_key_checks:
-                env_var, prefix = api_key_checks[provider_name]
-                api_key = os.getenv(env_var)
-                if not api_key:
-                    logger.error(f"[{metrics.correlation_id}] {env_var} не установлен!")
-                    logger.error(f"[{metrics.correlation_id}] Установите в .env или передайте: export {env_var}=...")
-                    return False
-                if "YOUR-KEY-HERE" in api_key or len(api_key) < 10:
-                    logger.error(f"[{metrics.correlation_id}] Невалидный {env_var}")
-                    return False
-                logger.info(f"[{metrics.correlation_id}] ✓ {env_var}: {api_key[:20]}...")
-
-            # Проверка Ollama
-            if provider_name == "ollama":
-                models_cfg = get_models_config(provider="ollama")
-                ollama_url = models_cfg.get_ollama_base_url()
-                ollama_model = models_cfg.get_ollama_model()
-                logger.info(f"[{metrics.correlation_id}] Ollama URL: {ollama_url}")
-                logger.info(f"[{metrics.correlation_id}] Ollama модель: {ollama_model}")
-
-                # Тестовое подключение к Ollama
-                try:
-                    import requests
-                    response = requests.get(f"{ollama_url}/api/tags", timeout=10)
-                    if response.status_code == 200:
-                        models = response.json().get("models", [])
-                        if models:
-                            # Проверяем, доступна ли указанная модель
-                            model_available = any(ollama_model in model.get("name", "") for model in models)
-                            if model_available:
-                                logger.info(f"[{metrics.correlation_id}] ✓ Модель {ollama_model} доступна в Ollama")
-                            else:
-                                logger.warning(
-                                    f"[{metrics.correlation_id}] ⚠️ Модель {ollama_model} не найдена. Доступные модели: {', '.join([m.get('name', '') for m in models])}")
-                                return False
-                        else:
-                            logger.warning(f"[{metrics.correlation_id}] ⚠️ Ollama доступен, но нет моделей")
-                            return False
-                    else:
-                        logger.error(f"[{metrics.correlation_id}] Ollama недоступен: {response.status_code}")
-                        if attempt == config.max_retries:
-                            return False
-                        continue
-                except Exception as e:
-                    logger.error(f"[{metrics.correlation_id}] Ошибка подключения к Ollama: {e}")
-                    if attempt == config.max_retries:
-                        return False
-                    delay = config.calculate_retry_delay(attempt)
-                    logger.warning(f"[{metrics.correlation_id}] Повтор через {delay:.1f}с...")
-                    await asyncio.sleep(delay)
-                    continue
-
-            # Тестовое создание провайдера
-            models_config = get_models_config(
-                provider=provider_name,
-                strategy=config.strategy,
-                enable_fallback=not config.no_fallback
-            )
-
-            try:
-                test_config = models_config.get_llm_config("classifier")
-                from src.infrastructure.ai.llm_provider import LLMProviderFactory
-                provider = LLMProviderFactory.create(test_config)
-
-                # Тестовый запрос
-                if provider_name == "ollama":
-                    # Для Ollama мы просто проверяем, что можем создать провайдер
-                    # так как мы уже проверили подключение выше
-                    logger.info(f"[{metrics.correlation_id}] ✓ {provider_name.upper()} провайдер OK")
-                    return True
-                else:
-                    # Для других провайдеров делаем тестовый запрос
-                    test_response = provider.generate("Test", temperature=0.1, max_tokens=10)
-                    logger.info(f"[{metrics.correlation_id}] ✓ {provider_name.upper()} провайдер OK")
-                    return True
-            except Exception as e:
-                logger.error(f"[{metrics.correlation_id}] Ошибка создания провайдера: {e}")
-                if attempt == config.max_retries:
-                    return False
-
-        except Exception as e:
-            if attempt < config.max_retries:
-                delay = config.calculate_retry_delay(attempt)
-                logger.warning(
-                    f"[{metrics.correlation_id}] Попытка {attempt + 1}/{config.max_retries + 1} не удалась: {e}")
-                logger.warning(f"[{metrics.correlation_id}] Повтор через {delay:.1f}с...")
-                await asyncio.sleep(delay)
-                metrics.retry_counts[provider_name] = metrics.retry_counts.get(provider_name, 0) + 1
-            else:
-                logger.error(f"[{metrics.correlation_id}] Ошибка провайдера {provider_name}: {e}")
-                return False
-    return False
-
-
-@asynccontextmanager
-async def database_session():
-    """Контекстный менеджер для сессии базы данных."""
-    session = AsyncSessionLocal()
-    try:
-        yield session
-        await session.commit()
-    except Exception as e:
-        await session.rollback()
-        raise
-    finally:
-        await session.close()
-
-
-async def process_article_batch(
-        articles_data: List[Dict[str, Any]],
-        orchestrator: AIOrchestrator,
-        config: PipelineConfig,
-        metrics: PipelineMetrics
-) -> Tuple[List[Article], int]:
-    """
-    Обработать пакет статей с повторными попытками.
-    Returns:
-        Кортеж (успешно обработанные статьи, количество ошибок)
-    """
-    processed_articles = []
-    errors = 0
-
-    for data in articles_data:
-        # Проверка дубликатов
-        if config.duplicate_check:
-            article_hash = get_article_hash(data)
-            if article_hash in metrics.article_hashes:
-                logger.debug(f"[{metrics.correlation_id}] Пропуск дубликата: {data.get('url', '')}")
-                continue
-            metrics.article_hashes.add(article_hash)
-
-        for attempt in range(config.max_retries + 1):
-            try:
-                start_time = time.time()
-                article = create_article_from_data(data)
-                processed_article = orchestrator.process_article(
-                    article=article,
-                    verbose=config.verbose,
-                    min_relevance=config.min_relevance
-                )
-
-                if processed_article is None:
-                    raise ValueError("Обработка статьи вернула None")
-
-                # Метаданные
-                if not hasattr(processed_article, 'metadata') or processed_article.metadata is None:
-                    processed_article.metadata = {}
-                processed_article.metadata.update({
-                    'ai_summary': getattr(processed_article, 'editorial_teaser', None),
-                    'editorial_title': getattr(processed_article, 'editorial_title', None),
-                    'relevance_score': processed_article.relevance_score or 0,
-                    'relevance_reason': getattr(processed_article, 'relevance_reason', None),
-                    'is_news': getattr(processed_article, 'is_news', None),
-                    'provider': config.provider,
-                    'correlation_id': metrics.correlation_id,
-                    'processing_attempts': attempt + 1,
-                })
-
-                processed_articles.append(processed_article)
-
-                # Метрики
-                elapsed = time.time() - start_time
-                metrics.processing_times.append(elapsed)
-
-                if config.verbose:
-                    score = processed_article.relevance_score or 0
-                    logger.info(
-                        f"[{metrics.correlation_id}] Обработана: {processed_article.title[:50]}... "
-                        f"(score: {score}/10, time: {elapsed:.1f}s)")
-                break  # Успех, выходим из цикла повторов
-
-            except Exception as e:
-                if attempt < config.max_retries:
-                    delay = config.calculate_retry_delay(attempt)
-                    logger.warning(f"[{metrics.correlation_id}] Ошибка обработки статьи (попытка {attempt + 1}): {e}")
-                    logger.warning(f"[{metrics.correlation_id}] Повтор через {delay:.1f}с...")
-                    await asyncio.sleep(delay)
-                    metrics.retry_counts["article_processing"] = metrics.retry_counts.get("article_processing", 0) + 1
-                else:
-                    logger.error(f"[{metrics.correlation_id}] Критическая ошибка обработки статьи: {e}")
-                    if config.debug:
-                        logger.error(f"[{metrics.correlation_id}] {traceback.format_exc()}")
-                    errors += 1
-                    # Сохраняем URL неудачной статьи
-                    if config.save_failed_urls:
-                        metrics.failed_urls.add(data.get('url', ''))
-                    break
-
-    return processed_articles, errors
-
-
-async def save_articles_to_db(
-        articles: List[Article],
-        config: PipelineConfig,
-        metrics: PipelineMetrics
-) -> Tuple[List[Article], int]:
-    """
-    Сохранить статьи в базу данных с повторными попытками.
-    Returns:
-        Кортеж (сохранённые статьи, количество ошибок)
-    """
-    saved_articles = []
-    errors = 0
-
-    async with database_session() as session:
-        repo = ArticleRepositoryImpl(session)
-        for article in articles:
-            for attempt in range(config.max_retries + 1):
-                try:
-                    db_article = await repo.save(article)
-                    saved_articles.append(db_article)
-                    break  # Успех, выходим из цикла повторов
-                except Exception as e:
-                    if attempt < config.max_retries:
-                        delay = config.calculate_retry_delay(attempt)
-                        logger.warning(
-                            f"[{metrics.correlation_id}] Ошибка сохранения статьи в БД (попытка {attempt + 1}): {e}")
-                        logger.warning(f"[{metrics.correlation_id}] Повтор через {delay:.1f}с...")
-                        await asyncio.sleep(delay)
-                        metrics.retry_counts["db_save"] = metrics.retry_counts.get("db_save", 0) + 1
-                    else:
-                        logger.error(f"[{metrics.correlation_id}] Критическая ошибка сохранения статьи в БД: {e}")
-                        if config.debug:
-                            logger.error(f"[{metrics.correlation_id}] {traceback.format_exc()}")
-                        errors += 1
-                        break
-    return saved_articles, errors
-
-
-async def save_articles_to_qdrant(
-        articles: List[Article],
-        qdrant: QdrantService,
-        config: PipelineConfig,
-        metrics: PipelineMetrics
-) -> int:
-    """
-    Сохранить статьи в Qdrant с повторными попытками.
-    Returns:
-        Количество успешно сохранённых статей
-    """
-    saved_count = 0
-    for article in articles:
-        score = article.relevance_score or 0
-        if score < config.min_relevance:
-            metrics.low_relevance += 1
-            continue
-
-        for attempt in range(config.max_retries + 1):
-            try:
-                qdrant.add_article(str(article.id), article.title, article.content or "")
-                saved_count += 1
-                break  # Успех, выходим из цикла повторов
-            except Exception as e:
-                if attempt < config.max_retries:
-                    delay = config.calculate_retry_delay(attempt)
-                    logger.warning(
-                        f"[{metrics.correlation_id}] Ошибка сохранения в Qdrant (попытка {attempt + 1}): {e}")
-                    logger.warning(f"[{metrics.correlation_id}] Повтор через {delay:.1f}с...")
-                    await asyncio.sleep(delay)
-                    metrics.retry_counts["qdrant_save"] = metrics.retry_counts.get("qdrant_save", 0) + 1
-                else:
-                    logger.error(f"[{metrics.correlation_id}] Критическая ошибка сохранения в Qdrant: {e}")
-                    if config.debug:
-                        logger.error(f"[{metrics.correlation_id}] {traceback.format_exc()}")
-                    break
-    return saved_count
-
-
-async def publish_articles_to_telegraph(
-        articles: List[Article],
-        config: PipelineConfig,
-        metrics: PipelineMetrics
-) -> int:
-    """
-    Опубликовать статьи на Telegraph.
-
-    Создаёт страницы на Telegraph для статей с relevance_score >= min_publish_score.
-
-    Returns:
-        Количество успешно опубликованных на Telegraph
-    """
-    telegraph_pub = TelegraphPublisher()
-    published_count = 0
-
-    eligible = [
-        a for a in articles
-        if (a.relevance_score or 0) >= config.min_publish_score
-    ]
-
-    if not eligible:
-        logger.info(
-            f"[{metrics.correlation_id}] Telegraph: нет статей с score >= {config.min_publish_score}"
-        )
-        return 0
-
-    logger.info(
-        f"[{metrics.correlation_id}] Telegraph: публикация {len(eligible)} статей "
-        f"(score >= {config.min_publish_score})"
-    )
-
-    for article in eligible:
-        try:
-            title = getattr(article, 'editorial_title', None) or article.title
-            content = getattr(article, 'editorial_rewritten', None) or article.content or ""
-            images = getattr(article, 'images', None) or []
-
-            result = telegraph_pub.create_page(
-                title=title,
-                content=content,
-                images=images,
-                author_name=article.author,
-                source_url=article.url,
-            )
-
-            if result.success and result.url:
-                published_count += 1
-                metrics.published_to_telegraph += 1
-
-                # Сохраняем telegraph_url в атрибут статьи для Telegram
-                article.telegraph_url = result.url
-
-                # Обновляем telegraph_url в БД
-                try:
-                    async with database_session() as session:
-                        from sqlalchemy import text as sa_text
-                        await session.execute(
-                            sa_text("""
-                                UPDATE articles
-                                SET telegraph_url = :url,
-                                    updated_at = NOW()
-                                WHERE id = :aid
-                            """),
-                            {"url": result.url, "aid": str(article.id)}
-                        )
-                    logger.info(
-                        f"[{metrics.correlation_id}] Telegraph OK: {title[:50]}... → {result.url}"
-                    )
-                except Exception as db_err:
-                    logger.warning(
-                        f"[{metrics.correlation_id}] Telegraph URL сохранён, но ошибка обновления БД: {db_err}"
-                    )
-            else:
-                logger.warning(
-                    f"[{metrics.correlation_id}] Telegraph FAIL: {title[:50]}... — {result.error}"
-                )
-
-        except Exception as e:
-            logger.error(
-                f"[{metrics.correlation_id}] Telegraph ошибка для '{article.title[:40]}': {e}"
-            )
-
-    return published_count
-
-
-async def send_articles_to_telegram(
-        articles: List[Article],
-        config: PipelineConfig,
-        metrics: PipelineMetrics
-) -> int:
-    """
-    Отправить статьи в Telegram-канал.
-
-    Отправляет короткий тизер + ссылку на Telegraph (если есть).
-    Только для статей с relevance_score >= min_publish_score.
-
-    Returns:
-        Количество успешно отправленных в Telegram
-    """
-    telegram_pub = TelegramPublisher()
-    sent_count = 0
-
-    eligible = [
-        a for a in articles
-        if (a.relevance_score or 0) >= config.min_publish_score
-           and getattr(a, 'telegraph_url', None)
-    ]
-
-    if not eligible:
-        logger.info(
-            f"[{metrics.correlation_id}] Telegram: нет статей с Telegraph URL"
-        )
-        return 0
-
-    logger.info(
-        f"[{metrics.correlation_id}] Telegram: отправка {len(eligible)} постов"
-    )
-
-    for article in eligible:
-        try:
-            title = getattr(article, 'editorial_title', None) or article.title
-            teaser = getattr(article, 'editorial_teaser', None) or ""
-            telegraph_url = getattr(article, 'telegraph_url', None)
-            tags = article.tags or article.hubs or []
-            source_name = article.source.value if hasattr(article.source, 'value') else str(article.source)
-
-            result = await telegram_pub.send_article_post(
-                title=title,
-                telegraph_url=telegraph_url,
-                teaser=teaser,
-                tags=tags,
-                source_url=article.url,
-                source_name=source_name,
-            )
-
-            if result.success:
-                sent_count += 1
-                metrics.sent_to_telegram += 1
-                logger.info(
-                    f"[{metrics.correlation_id}] Telegram OK: {title[:50]}... (msg_id={result.message_id})"
-                )
-            else:
-                logger.warning(
-                    f"[{metrics.correlation_id}] Telegram FAIL: {title[:50]}... — {result.error}"
-                )
-
-            # Rate limit: задержка между отправками
-            await asyncio.sleep(2.0)
-
-        except Exception as e:
-            logger.error(
-                f"[{metrics.correlation_id}] Telegram ошибка для '{article.title[:40]}': {e}"
-            )
-
-    return sent_count
-
-
-async def monitor_system(metrics: PipelineMetrics, interval: float = 30.0):
-    """Фоновая задача мониторинга системы."""
+async def monitor_system(metrics, interval=30.0):
     while True:
         metrics.add_system_metrics()
         await asyncio.sleep(interval)
 
 
-async def health_check(config: PipelineConfig, metrics: PipelineMetrics):
-    """Периодическая проверка здоровья системы."""
-    while True:
-        try:
-            # Проверка доступности БД
-            async with AsyncSessionLocal() as session:
-                from sqlalchemy import text
-                await session.execute(text("SELECT 1"))
-            # Проверка доступности Qdrant
-            qdrant = QdrantService()
-            qdrant.client.get_collections()
-            logger.debug(f"[{metrics.correlation_id}] Health check: OK")
-        except Exception as e:
-            logger.warning(f"[{metrics.correlation_id}] Health check failed: {e}")
-            metrics.warnings += 1
-        await asyncio.sleep(config.health_check_interval)
-
-
-async def save_failed_urls(metrics: PipelineMetrics, config: PipelineConfig):
-    """Сохранить список неудачных URL."""
+async def save_failed_urls_file(metrics, config):
     if not metrics.failed_urls or not config.save_failed_urls:
         return
-
-    failed_file = config.cache_dir / f"failed_urls_{metrics.correlation_id}.txt"
+    path = config.cache_dir / f"failed_urls_{metrics.correlation_id}.txt"
     try:
-        async with aiofiles.open(failed_file, 'w', encoding='utf-8') as f:
+        async with aiofiles.open(path, 'w') as f:
             for url in metrics.failed_urls:
                 await f.write(f"{url}\n")
-        logger.info(f"[{metrics.correlation_id}] Сохранено {len(metrics.failed_urls)} неудачных URL в {failed_file}")
+        logger.info(f"Сохранено {len(metrics.failed_urls)} неудачных URL в {path}")
     except Exception as e:
-        logger.warning(f"[{metrics.correlation_id}] Ошибка сохранения неудачных URL: {e}")
+        logger.warning(f"Ошибка сохранения URL: {e}")
 
+
+def parse_url_args(raw: List[str]) -> List[str]:
+    result = []
+    for item in raw:
+        for url in item.split(','):
+            url = url.strip()
+            if url:
+                result.append(url)
+    return result
+
+
+# =========================================================================
+# ГЛАВНЫЙ КОНВЕЙЕР
+#
+# Фазы 1-2 различаются по режиму:
+#   --url: standalone парсер + psycopg2 (без asyncpg)
+#   default: src.scrapers + async DB (требует asyncpg)
+#
+# Фаза 3+ (AI обработка) — одинакова. Использует AIOrchestrator
+# который импортируется лениво, внутри try-блока, и НЕ тянет asyncpg.
+# =========================================================================
 
 async def full_pipeline(
-        limit: int = 10,
-        hubs: str = "",
-        verbose: bool = False,
-        min_relevance: int = 5,
-        debug: bool = False,
-        provider: Optional[str] = None,
-        strategy: Optional[str] = None,
-        no_fallback: bool = False,
-        max_retries: int = 3,
-        retry_delay: float = 1.0,
-        max_concurrent: int = 5,
-        batch_size: int = 10,
-        timeout: float = 300.0,
-        mode: str = "normal",
-        retry_strategy: str = "exponential",
-        enable_cache: bool = True,
-        cache_dir: str = "cache/pipeline",
-        enable_monitoring: bool = True,
-        monitoring_interval: float = 30.0,
-        enable_save_failed_urls: bool = True,
-        duplicate_check: bool = True,
-        rate_limit: Optional[int] = None,
-        health_check_interval: float = 60.0,
-        publish_telegraph: bool = False,
-        min_publish_score: int = 7,
-        publish_telegram: bool = False
+        limit=10, hubs="", verbose=False, min_relevance=5, debug=False,
+        provider=None, strategy=None, no_fallback=False,
+        max_retries=3, retry_delay=1.0, max_concurrent=5, batch_size=10,
+        timeout=300.0, mode="normal", retry_strategy="exponential",
+        enable_cache=True, cache_dir="cache/pipeline",
+        enable_monitoring=True, monitoring_interval=30.0,
+        enable_save_failed_urls=True, duplicate_check=True,
+        rate_limit=None, health_check_interval=60.0,
+        publish_telegraph=False, min_publish_score=7, publish_telegram=False,
+        urls=None
 ):
-    """
-    Полный конвейер обработки статей с улучшенной обработкой ошибок.
-    """
-    # Инициализация конфигурации и метрик
+    """Полный конвейер обработки статей."""
+
+    # --- Конфигурация ---
     try:
         config = PipelineConfig(
-            limit=limit,
-            hubs=hubs,
-            verbose=verbose,
-            min_relevance=min_relevance,
-            debug=debug,
-            provider=provider,
-            strategy=strategy,
-            no_fallback=no_fallback,
-            max_retries=max_retries,
-            retry_delay=retry_delay,
-            max_concurrent=max_concurrent,
-            batch_size=batch_size,
-            timeout=timeout,
-            mode=OperationMode(mode),
-            retry_strategy=RetryStrategy(retry_strategy),
-            enable_cache=enable_cache,
-            cache_dir=cache_dir,
-            enable_monitoring=enable_monitoring,
-            monitoring_interval=monitoring_interval,
-            save_failed_urls=enable_save_failed_urls,
-            duplicate_check=duplicate_check,
-            rate_limit=rate_limit,
-            health_check_interval=health_check_interval,
-            publish_telegraph=publish_telegraph,
-            min_publish_score=min_publish_score,
-            publish_telegram=publish_telegram
+            limit=limit, hubs=hubs, verbose=verbose, min_relevance=min_relevance,
+            debug=debug, provider=provider, strategy=strategy, no_fallback=no_fallback,
+            max_retries=max_retries, retry_delay=retry_delay,
+            max_concurrent=max_concurrent, batch_size=batch_size, timeout=timeout,
+            mode=OperationMode(mode), retry_strategy=RetryStrategy(retry_strategy),
+            enable_cache=enable_cache, cache_dir=cache_dir,
+            enable_monitoring=enable_monitoring, monitoring_interval=monitoring_interval,
+            save_failed_urls=enable_save_failed_urls, duplicate_check=duplicate_check,
+            rate_limit=rate_limit, health_check_interval=health_check_interval,
+            publish_telegraph=publish_telegraph, min_publish_score=min_publish_score,
+            publish_telegram=publish_telegram, urls=urls,
         )
         metrics = PipelineMetrics(mode=config.mode)
     except ValueError as e:
         logger.error(f"Ошибка конфигурации: {e}")
         return
 
-    # Установка уровня логирования
     if debug:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    # Заголовок
-    print(format_section_header("ПОЛНЫЙ КОНВЕЙЕР ОБРАБОТКИ СТАТЕЙ"))
-    print(format_table_row("ID выполнения", metrics.correlation_id))
-    print(format_table_row("Версия", "3.1"))
-    print(format_table_row("Запущен", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-    print(format_table_row("Режим", config.mode.value.upper()))
-    print(format_table_row("Лимит статей", config.limit))
-    print(format_table_row("Целевые хабы", config.hubs if config.hubs else "Все"))
-    print(format_table_row("Мин. релевантность", f"{config.min_relevance}/10"))
-    print(format_table_row("Макс. попыток", config.max_retries))
-    print(format_table_row("Стратегия повторов", config.retry_strategy.value))
-    print(format_table_row("Параллельных задач", config.max_concurrent))
-    print(format_table_row("Размер пакета", config.batch_size))
-    print(format_table_row("Кэширование", "ВКЛ" if config.enable_cache else "ВЫКЛ"))
-    print(format_table_row("Мониторинг", "ВКЛ" if config.enable_monitoring else "ВЫКЛ"))
-    print(format_table_row("Telegraph", "ВКЛ" if config.publish_telegraph else "ВЫКЛ"))
-    print(format_table_row("Telegram", "ВКЛ" if config.publish_telegram else "ВЫКЛ"))
-    if config.publish_telegraph or config.publish_telegram:
-        print(format_table_row("Мин. score публикации", f"{config.min_publish_score}/10"))
+    # --- Заголовок ---
+    print(fmt_header("ПОЛНЫЙ КОНВЕЙЕР ОБРАБОТКИ СТАТЕЙ"))
+    print(fmt_row("ID", metrics.correlation_id))
+    print(fmt_row("Версия", "3.2"))
+    print(fmt_row("Запущен", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+    print(fmt_row("Режим", "URL" if config.is_url_mode else config.mode.value.upper()))
+    if config.is_url_mode:
+        print(fmt_row("URL статей", len(config.urls)))
+        for i, u in enumerate(config.urls, 1):
+            print(fmt_row(f"  [{i}]", u[:70]))
+    else:
+        print(fmt_row("Лимит", config.limit))
+        print(fmt_row("Хабы", config.hubs or "Все"))
+    print(fmt_row("Мин. релевантность", f"{config.min_relevance}/10"))
+    print(fmt_row("Макс. попыток", config.max_retries))
+    print(fmt_row("Telegraph", "ВКЛ" if config.publish_telegraph else "ВЫКЛ"))
+    print(fmt_row("Telegram", "ВКЛ" if config.publish_telegram else "ВЫКЛ"))
 
-    # Обработчик сигналов для graceful shutdown
+    # Graceful shutdown
     shutdown_event = asyncio.Event()
-
     def signal_handler(signum, frame):
-        logger.info(f"[{metrics.correlation_id}] Получен сигнал {signum}, начинаем graceful shutdown...")
+        logger.info(f"[{metrics.correlation_id}] Получен сигнал {signum}, shutdown...")
         shutdown_event.set()
         metrics.status = PipelineStatus.INTERRUPTED
-
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    # Фоновые задачи
     monitor_task = None
-    health_task = None
+    models_config = None  # для finally-блока
 
     try:
-        # Запуск фоновых задач
+        # --- Мониторинг ---
         if config.enable_monitoring:
             monitor_task = asyncio.create_task(monitor_system(metrics, config.monitoring_interval))
-            health_task = asyncio.create_task(health_check(config, metrics))
 
-        # Конфигурация LLM
-        print(format_subsection("КОНФИГУРАЦИЯ LLM"))
-
-        # Сбросить кэш если указан provider
+        # --- LLM конфигурация ---
+        print(fmt_sub("КОНФИГУРАЦИЯ LLM"))
         if provider:
             reset_models_config()
-
-        # Получить конфигурацию
         models_config = get_models_config(
-            provider=config.provider,
-            strategy=config.strategy,
-            enable_fallback=not config.no_fallback,  # простая инверсия
-            force_new=bool(provider)
+            provider=config.provider, strategy=config.strategy,
+            enable_fallback=not config.no_fallback, force_new=bool(provider)
         )
+        print(fmt_row("Провайдер", models_config.provider_name.upper()))
+        print(fmt_row("Стратегия", models_config.strategy))
+        print(fmt_row("Fallback", "ВЫКЛЮЧЕН ⚠️" if not models_config.enable_fallback else "ВКЛЮЧЁН ✓"))
 
-        print(format_table_row("Провайдер", models_config.provider_name.upper()))
-        print(format_table_row("Стратегия", models_config.strategy))
-        print(format_table_row("Fallback", "ВЫКЛЮЧЕН ⚠️" if not models_config.enable_fallback else "ВКЛЮЧЁН ✓"))
-        if models_config.enable_fallback:
-            chain = models_config.get_fallback_providers()
-            print(format_table_row("Цепочка fallback", " → ".join(chain)))
-        else:
-            print(format_table_row("Режим", f"Только {models_config.provider_name.upper()}"))
-
-        # Проверка провайдера
+        # --- Проверка LLM (нужна в обоих режимах) ---
         metrics.status = PipelineStatus.INITIALIZING
-        if not await check_llm_provider(config, metrics):
-            logger.error(f"[{metrics.correlation_id}] Провайдер недоступен, выход")
+        provider_ok = await _check_llm_provider(config, metrics)
+        if not provider_ok:
+            logger.error(f"[{metrics.correlation_id}] Провайдер недоступен")
             metrics.status = PipelineStatus.FAILED
             return
 
-        # Инициализация сервисов
-        print(format_subsection("ИНИЦИАЛИЗАЦИЯ СЕРВИСОВ"))
+        # =====================================================================
+        # ФАЗЫ 1-2: Получение статей (зависит от режима)
+        # =====================================================================
+        if config.is_url_mode:
+            new_articles_data = await _phase12_url_mode(config, metrics)
+        else:
+            new_articles_data = await _phase12_bulk_mode(config, metrics)
+
+        if not new_articles_data:
+            return
+
+        # =====================================================================
+        # ФАЗА 3: AI ОБРАБОТКА (streaming, одинакова для обоих режимов)
+        #
+        # Ленивый импорт AIOrchestrator — он НЕ тянет asyncpg,
+        # потому что оркестратор работает с LLM, а не с БД.
+        # =====================================================================
+        print(fmt_header("ФАЗА 3: AI ОБРАБОТКА (streaming)"))
+        metrics.status = PipelineStatus.PROCESSING
+
+        from src.application.ai_services.orchestrator import AIOrchestrator
+        from src.domain.value_objects.source_type import SourceType
+        from src.domain.entities.article import Article
+
+        orchestrator = AIOrchestrator(
+            provider=config.provider, enable_fallback=not config.no_fallback
+        )
+        logger.info(f"[{metrics.correlation_id}] ✓ AIOrchestrator")
+
+        # Qdrant (опциональный, не критичен)
+        qdrant = None
         try:
-            scraper = HabrScraperService()
-            logger.info(f"[{metrics.correlation_id}] ✓ HabrScraperService")
-
-            # Передаём параметры в оркестратор
-            orchestrator = AIOrchestrator(
-                provider=config.provider,
-                enable_fallback=not config.no_fallback  # простая инверсия
-            )
-            logger.info(f"[{metrics.correlation_id}] ✓ AIOrchestrator")
-
+            from src.infrastructure.ai.qdrant_client import QdrantService
             qdrant = QdrantService()
             logger.info(f"[{metrics.correlation_id}] ✓ QdrantService")
         except Exception as e:
-            logger.error(f"[{metrics.correlation_id}] Ошибка инициализации: {e}",
-                         exc_info=True)  # ✅ Добавлено детальное логирование
-            metrics.status = PipelineStatus.FAILED
-            return
+            logger.warning(f"[{metrics.correlation_id}] Qdrant недоступен: {e}")
 
-        # Проверка БД
-        try:
-            async with AsyncSessionLocal() as test_session:
-                from sqlalchemy import text
-                await test_session.execute(text("SELECT 1"))
-            logger.info(f"[{metrics.correlation_id}] ✓ PostgreSQL: OK")
-        except Exception as e:
-            logger.error(f"[{metrics.correlation_id}] PostgreSQL ошибка: {e}",
-                         exc_info=True)  # ✅ Добавлено детальное логирование
-            metrics.status = PipelineStatus.FAILED
-            return
-
-        logger.info(f"[{metrics.correlation_id}] ✓ Qdrant: OK")
-
-        # Парсинг
-        print(format_section_header("ФАЗА 1: ПАРСИНГ"))
-        metrics.status = PipelineStatus.PARSING
-        hubs_list = config.get_hubs_list()
-        parse_limit = config.limit * 3  # Получаем больше статей для фильтрации
-
-        # Проверка кэша
-        cache_key = f"scrapped_{hubs}_{parse_limit}_{hash(tuple(hubs_list))}"
-        cache_path = config.get_cache_path(cache_key)
-        articles_data = []
-
-        if config.enable_cache and config.mode == OperationMode.NORMAL:
-            cached_data = await load_cache(cache_path)
-            if cached_data:
-                articles_data = cached_data.get('articles', [])
-                metrics.cache_hits += 1
-                logger.info(f"[{metrics.correlation_id}] Загружено из кэша: {len(articles_data)} статей")
-                metrics.status = PipelineStatus.CACHED
-            else:
-                metrics.cache_misses += 1
-        else:
-            metrics.cache_misses += 1
-
-        if not articles_data:
-            scrape_start = time.time()
+        # Telegraph / Telegram publishers
+        telegraph_pub = None
+        telegram_pub = None
+        if config.publish_telegraph:
             try:
-                articles_data = await asyncio.wait_for(
-                    scraper._scrape_articles(parse_limit, hubs_list),
-                    timeout=config.timeout
-                )
-                # Сохраняем в кэш
-                if config.enable_cache:
-                    await save_cache(cache_path, {'articles': articles_data, 'timestamp': time.time()})
-            except asyncio.TimeoutError:
-                logger.error(f"[{metrics.correlation_id}] Таймаут парсинга ({config.timeout}с)")
-                metrics.status = PipelineStatus.FAILED
-                return
+                from src.infrastructure.telegram.telegraph_publisher import TelegraphPublisher
+                telegraph_pub = TelegraphPublisher()
             except Exception as e:
-                logger.error(f"[{metrics.correlation_id}] Ошибка парсинга: {e}",
-                             exc_info=True)
-                metrics.status = PipelineStatus.FAILED
-                return
+                logger.warning(f"Telegraph недоступен: {e}")
+        if config.publish_telegram:
+            try:
+                from src.infrastructure.telegram.telegram_publisher import TelegramPublisher
+                telegram_pub = TelegramPublisher()
+            except Exception as e:
+                logger.warning(f"Telegram недоступен: {e}")
 
-            scrape_time = time.time() - scrape_start
-            logger.info(f"[{metrics.correlation_id}] Спарсено: {len(articles_data)} за {scrape_time:.2f}с")
-            metrics.total_scraped = len(articles_data)
+        total = len(new_articles_data)
+        pbar = tqdm(total=total, desc="Обработка") if HAS_TQDM else None
 
-        if not articles_data:
-            print("Статьи не найдены")
-            metrics.status = PipelineStatus.COMPLETED
-            return
+        logger.info(
+            f"[{metrics.correlation_id}] Streaming: {total} статей, "
+            f"telegraph={'ON' if telegraph_pub else 'OFF'}, "
+            f"telegram={'ON' if telegram_pub else 'OFF'}, "
+            f"db_mode={'psycopg2' if config.is_url_mode else 'async'}"
+        )
 
-        # Проверка БД
-        print(format_section_header("ФАЗА 2: ВАЛИДАЦИЯ БД"))
-        metrics.status = PipelineStatus.VALIDATING
-        try:
-            async with database_session() as session:
-                repo = ArticleRepositoryImpl(session)
-                urls = [d['url'] for d in articles_data]
-                existing = await repo.get_existing_urls(urls)
-                new_articles_data = [d for d in articles_data if d['url'] not in existing][:config.limit]
+        for idx, data in enumerate(new_articles_data, 1):
+            article_start = time.time()
+            url = data.get('url', '')
+            title_short = data.get('title', '')[:60]
 
-            print(format_table_row("Спарсено", len(articles_data)))
-            print(format_table_row("В БД", len(existing)))
-            print(format_table_row("Новых", len(new_articles_data)))
+            if shutdown_event.is_set():
+                logger.info(f"[{metrics.correlation_id}] ⚠️ Прервано на {idx-1}/{total}")
+                metrics.status = PipelineStatus.INTERRUPTED
+                break
 
-            if not new_articles_data:
-                print("Нет новых статей")
-                metrics.status = PipelineStatus.COMPLETED
-                return
-        except Exception as e:
-            logger.error(f"[{metrics.correlation_id}] Ошибка валидации БД: {e}",
-                         exc_info=True)  # ✅ Добавлено детальное логирование
-            metrics.status = PipelineStatus.FAILED
-            return
-
-        # AI обработка
-        print(format_section_header("ФАЗА 3: AI ОБРАБОТКА"))
-        metrics.status = PipelineStatus.PROCESSING
-
-        # Разбиваем на пакеты для обработки
-        batches = [
-            new_articles_data[i:i + config.batch_size]
-            for i in range(0, len(new_articles_data), config.batch_size)
-        ]
-
-        pbar = tqdm(total=len(new_articles_data), desc="Обработка") if HAS_TQDM else None
-
-        # Создаём семафор для ограничения параллелизма
-        semaphore = asyncio.Semaphore(config.max_concurrent)
-
-        async def process_batch_with_semaphore(batch):
-            async with semaphore:
-                # Проверяем прерывание
-                if shutdown_event.is_set():
-                    raise PipelineInterrupted()
-
-                # Обрабатываем пакет
-                processed_articles, batch_errors = await process_article_batch(
-                    batch, orchestrator, config, metrics
-                )
-
-                # Сохраняем в БД
-                saved_articles, db_errors = await save_articles_to_db(
-                    processed_articles, config, metrics
-                )
-
-                # Сохраняем в Qdrant
-                qdrant_count = await save_articles_to_qdrant(
-                    saved_articles, qdrant, config, metrics
-                )
-
-                # Обновляем метрики
-                metrics.processed += len(processed_articles)
-                metrics.saved_to_db += len(saved_articles)
-                metrics.saved_to_qdrant += qdrant_count
-                metrics.errors += batch_errors + db_errors
-
-                # ФАЗА 4: Публикация в Telegraph
-                if config.publish_telegraph and saved_articles:
-                    telegraph_count = await publish_articles_to_telegraph(
-                        saved_articles, config, metrics
-                    )
-
-                # ФАЗА 5: Отправка в Telegram (после Telegraph, чтобы были URL)
-                if config.publish_telegram and saved_articles:
-                    telegram_count = await send_articles_to_telegram(
-                        saved_articles, config, metrics
-                    )
-
-                # Обновляем прогресс
-                if pbar:
-                    pbar.update(len(batch))
-                    avg_score = sum(a.relevance_score or 0 for a in processed_articles) / len(
-                        processed_articles) if processed_articles else 0
-                    pbar.set_postfix({'score': f"{avg_score:.1f}/10", 'qdrant': qdrant_count})
-
-                return processed_articles, saved_articles, qdrant_count
-
-        # Обрабатываем пакеты concurrently
-        try:
-            results = await asyncio.gather(
-                *[process_batch_with_semaphore(batch) for batch in batches],
-                return_exceptions=True
+            logger.info(
+                f"[{metrics.correlation_id}] {'─'*60}\n"
+                f"  [{idx}/{total}] {title_short}...\n  URL: {url[:80]}"
             )
 
-            # Проверяем результаты на исключения
-            for result in results:
-                if isinstance(result, Exception):
-                    if isinstance(result, PipelineInterrupted):
-                        raise result
-                    logger.error(f"[{metrics.correlation_id}] Ошибка обработки пакета: {result}", exc_info=True)
-                    metrics.errors += 1
-        except PipelineInterrupted:
-            logger.info(f"[{metrics.correlation_id}] Обработка прервана")
+            # Дубликаты
+            if config.duplicate_check:
+                h = get_article_hash(data)
+                if h in metrics.article_hashes:
+                    logger.info(f"  [{idx}/{total}] SKIP: дубликат")
+                    if pbar: pbar.update(1)
+                    continue
+                metrics.article_hashes.add(h)
+
+            # --- ШАГ 1: AI обработка ---
+            processed_article = None
+            for attempt in range(config.max_retries + 1):
+                try:
+                    ai_start = time.time()
+                    published_at = parse_datetime(data.get('published_at'))
+                    article = Article(
+                        id=uuid.uuid4(), title=data.get('title', ''),
+                        content=data.get('content', ''), url=data.get('url', ''),
+                        source=SourceType.HABR, author=data.get('author'),
+                        published_at=published_at,
+                        tags=data.get('tags', []), hubs=data.get('hubs', []),
+                        images=data.get('images', []),
+                    )
+                    processed_article = orchestrator.process_article(
+                        article=article, verbose=config.verbose,
+                        min_relevance=config.min_relevance
+                    )
+                    if processed_article is None:
+                        raise ValueError("process_article вернул None")
+
+                    if not hasattr(processed_article, 'metadata') or processed_article.metadata is None:
+                        processed_article.metadata = {}
+                    processed_article.metadata.update({
+                        'ai_summary': getattr(processed_article, 'editorial_teaser', None),
+                        'editorial_title': getattr(processed_article, 'editorial_title', None),
+                        'relevance_score': processed_article.relevance_score or 0,
+                        'provider': config.provider,
+                        'correlation_id': metrics.correlation_id,
+                    })
+
+                    ai_elapsed = time.time() - ai_start
+                    metrics.processing_times.append(ai_elapsed)
+                    metrics.processed += 1
+
+                    score = processed_article.relevance_score or 0
+                    logger.info(
+                        f"  [{idx}/{total}] ✅ AI OK ({ai_elapsed:.1f}s) | "
+                        f"Score: {score}/10 | "
+                        f"{'НОВОСТЬ' if getattr(processed_article, 'is_news', False) else 'СТАТЬЯ'}"
+                    )
+                    break
+
+                except Exception as e:
+                    if attempt < config.max_retries:
+                        delay = config.calculate_retry_delay(attempt)
+                        logger.warning(f"  [{idx}/{total}] AI ошибка ({attempt+1}): {e}, повтор {delay:.1f}s")
+                        await asyncio.sleep(delay)
+                    else:
+                        logger.error(f"  [{idx}/{total}] ❌ AI FAIL: {e}")
+                        metrics.errors += 1
+                        metrics.failed_urls.add(url)
+
+            if not processed_article:
+                if pbar: pbar.update(1)
+                continue
+
+            # --- ШАГ 2: Сохранение в БД ---
+            score = processed_article.relevance_score or 0
+            saved_id = None
+
+            if config.is_url_mode:
+                # psycopg2 (синхронно)
+                meta = processed_article.metadata or {}
+                saved_id = _save_article_sync(data, metadata=meta)
+                if saved_id:
+                    # Обновляем AI-поля после сохранения
+                    ai_updates = {
+                        'is_news': getattr(processed_article, 'is_news', False),
+                        'relevance_score': processed_article.relevance_score,
+                        'relevance_reason': getattr(processed_article, 'relevance_reason', None),
+                        'editorial_title': getattr(processed_article, 'editorial_title', None),
+                        'editorial_teaser': getattr(processed_article, 'editorial_teaser', None),
+                        'editorial_rewritten': getattr(processed_article, 'editorial_rewritten', None),
+                        'telegram_post_text': getattr(processed_article, 'telegram_post_text', None),
+                        'telegram_cover_image': getattr(processed_article, 'telegram_cover_image', None),
+                        'telegraph_content_html': getattr(processed_article, 'telegraph_content_html', None),
+                        'status': 'processed',
+                        'article_metadata': json.dumps(meta, ensure_ascii=False),
+                    }
+                    _update_article_sync(saved_id, ai_updates)
+                    metrics.saved_to_db += 1
+                    logger.info(f"  [{idx}/{total}] ✅ DB OK (psycopg2, id={saved_id})")
+                else:
+                    logger.warning(f"  [{idx}/{total}] ⚠️ DB: дубликат или ошибка")
+            else:
+                # async (через src.*)
+                from src.infrastructure.config.database import AsyncSessionLocal
+                from src.infrastructure.persistence.article_repository_impl import ArticleRepositoryImpl
+                for attempt in range(config.max_retries + 1):
+                    try:
+                        async with AsyncSessionLocal() as session:
+                            repo = ArticleRepositoryImpl(session)
+                            saved = await repo.save(processed_article)
+                            await session.commit()
+                        saved_id = str(saved.id)
+                        metrics.saved_to_db += 1
+                        logger.info(f"  [{idx}/{total}] ✅ DB OK (async, id={saved_id})")
+                        break
+                    except Exception as e:
+                        if attempt < config.max_retries:
+                            delay = config.calculate_retry_delay(attempt)
+                            logger.warning(f"  [{idx}/{total}] DB ({attempt+1}): {e}, повтор {delay:.1f}s")
+                            await asyncio.sleep(delay)
+                        else:
+                            logger.error(f"  [{idx}/{total}] ❌ DB FAIL: {e}")
+                            metrics.errors += 1
+
+            if not saved_id:
+                if pbar: pbar.update(1)
+                continue
+
+            # --- ШАГ 3: Qdrant ---
+            if qdrant and score >= config.min_relevance:
+                try:
+                    qdrant.add_article(saved_id, processed_article.title, processed_article.content or "")
+                    metrics.saved_to_qdrant += 1
+                    logger.info(f"  [{idx}/{total}] ✅ Qdrant OK")
+                except Exception as e:
+                    logger.warning(f"  [{idx}/{total}] ⚠️ Qdrant: {e}")
+            elif score < config.min_relevance:
+                metrics.low_relevance += 1
+
+            # --- ШАГ 4: Telegraph ---
+            telegraph_url = None
+            if telegraph_pub and score >= config.min_publish_score:
+                try:
+                    t_title = getattr(processed_article, 'editorial_title', None) or processed_article.title
+                    t_content = getattr(processed_article, 'editorial_rewritten', None) or processed_article.content or ""
+                    t_images = getattr(processed_article, 'images', None) or []
+
+                    result = telegraph_pub.create_page(
+                        title=t_title, content=t_content, images=t_images,
+                        author_name=processed_article.author, source_url=processed_article.url,
+                    )
+                    if result.success and result.url:
+                        telegraph_url = result.url
+                        metrics.published_to_telegraph += 1
+                        _update_article_sync(saved_id, {'telegraph_url': telegraph_url})
+                        logger.info(f"  [{idx}/{total}] ✅ Telegraph OK: {telegraph_url}")
+                    else:
+                        logger.warning(f"  [{idx}/{total}] ⚠️ Telegraph: {getattr(result, 'error', 'unknown')}")
+                except Exception as e:
+                    logger.error(f"  [{idx}/{total}] ❌ Telegraph: {e}")
+
+            # --- ШАГ 5: Telegram ---
+            if telegram_pub and score >= config.min_publish_score and telegraph_url:
+                try:
+                    t_title = getattr(processed_article, 'editorial_title', None) or processed_article.title
+                    t_teaser = getattr(processed_article, 'editorial_teaser', None) or ""
+                    t_tags = processed_article.tags or getattr(processed_article, 'hubs', []) or []
+                    t_source = processed_article.source.value if hasattr(processed_article.source, 'value') else str(processed_article.source)
+
+                    tg_result = await telegram_pub.send_article_post(
+                        title=t_title, telegraph_url=telegraph_url, teaser=t_teaser,
+                        tags=t_tags, source_url=processed_article.url, source_name=t_source,
+                    )
+                    if tg_result.success:
+                        metrics.sent_to_telegram += 1
+                        logger.info(f"  [{idx}/{total}] ✅ Telegram OK (msg_id={tg_result.message_id})")
+                    else:
+                        logger.warning(f"  [{idx}/{total}] ⚠️ Telegram: {tg_result.error}")
+                    await asyncio.sleep(2.0)
+                except Exception as e:
+                    logger.error(f"  [{idx}/{total}] ❌ Telegram: {e}")
+
+            # Итог
+            elapsed = time.time() - article_start
+            logger.info(
+                f"  [{idx}/{total}] DONE ({elapsed:.1f}s) | "
+                f"DB:{metrics.saved_to_db} Qdrant:{metrics.saved_to_qdrant} "
+                f"Tph:{metrics.published_to_telegraph} Tg:{metrics.sent_to_telegram} "
+                f"Err:{metrics.errors}"
+            )
             if pbar:
-                pbar.close()
-            metrics.status = PipelineStatus.INTERRUPTED
-            return
-        finally:
-            if pbar:
-                pbar.close()
+                pbar.update(1)
+                pbar.set_postfix(score=f"{score:.0f}", db=metrics.saved_to_db)
+
+        if pbar:
+            pbar.close()
 
     except Exception as e:
         metrics.status = PipelineStatus.FAILED
-        logger.error(f"[{metrics.correlation_id}] Критическая ошибка конвейера: {e}",
-                     exc_info=True)
-        if debug:
-            logger.error(f"[{metrics.correlation_id}] {traceback.format_exc()}")
+        logger.error(f"[{metrics.correlation_id}] Критическая ошибка: {e}", exc_info=True)
         return
     finally:
-        # Финализация
         metrics.status = PipelineStatus.FINALIZING
         metrics.end_time = time.time()
-
-        # Сохранение неудачных URL
-        await save_failed_urls(metrics, config)
-
-        # Отмена фоновых задач
+        await save_failed_urls_file(metrics, config)
         if monitor_task:
             monitor_task.cancel()
-        if health_task:
-            health_task.cancel()
 
-        # Статистика
-        print(format_section_header("РЕЗУЛЬТАТЫ"))
-        print(format_table_row("ID выполнения", metrics.correlation_id))
-        print(format_table_row("Провайдер", models_config.provider_name.upper()))
-        print(format_table_row("Fallback", "OFF" if not models_config.enable_fallback else "ON"))
-        print(format_table_row("Обработано", metrics.processed))
-        print(format_table_row("В БД", metrics.saved_to_db))
-        print(format_table_row("В Qdrant", metrics.saved_to_qdrant))
-        print(format_table_row("В Telegraph", metrics.published_to_telegraph))
-        print(format_table_row("В Telegram", metrics.sent_to_telegram))
-        print(format_table_row("Низкая релевантность", metrics.low_relevance))
-        print(format_table_row("Ошибок", metrics.errors))
-        print(format_table_row("Предупреждений", metrics.warnings))
+        # Результаты
+        print(fmt_header("РЕЗУЛЬТАТЫ"))
+        print(fmt_row("ID", metrics.correlation_id))
+        if models_config:
+            print(fmt_row("Провайдер", models_config.provider_name.upper()))
+        if config.is_url_mode:
+            print(fmt_row("Режим", f"URL ({len(config.urls)} шт.)"))
+        print(fmt_row("Обработано AI", metrics.processed))
+        print(fmt_row("В БД", metrics.saved_to_db))
+        print(fmt_row("В Qdrant", metrics.saved_to_qdrant))
+        print(fmt_row("В Telegraph", metrics.published_to_telegraph))
+        print(fmt_row("В Telegram", metrics.sent_to_telegram))
+        print(fmt_row("Низкая релевантность", metrics.low_relevance))
+        print(fmt_row("Ошибок", metrics.errors))
         if metrics.processing_times:
-            print(format_table_row("Среднее время", f"{metrics.avg_processing_time:.2f}с"))
-            print(format_table_row("Общее время", f"{metrics.duration:.2f}с"))
-            print(format_table_row("Успешность", f"{metrics.success_rate:.1f}%"))
-            print(format_table_row("Hit rate кэша", f"{metrics.cache_hit_rate:.1f}%"))
+            print(fmt_row("Среднее время AI", f"{metrics.avg_processing_time:.2f}с"))
+            print(fmt_row("Общее время", f"{metrics.duration:.2f}с"))
+            print(fmt_row("Успешность", f"{metrics.success_rate:.1f}%"))
 
-        # Метрики повторов
-        if metrics.retry_counts:
-            print(format_subsection("ПОВТОРНЫЕ ПОПЫТКИ"))
-            for operation, count in metrics.retry_counts.items():
-                print(format_table_row(operation, count))
-
-        # Системные метрики
-        if metrics.system_metrics:
-            print(format_subsection("СИСТЕМНЫЕ МЕТРИКИ"))
-            latest = metrics.system_metrics[-1]
-            print(format_table_row("CPU", f"{latest.cpu_percent:.1f}%"))
-            print(format_table_row("Память", f"{latest.memory_percent:.1f}% ({latest.memory_used_mb:.0f}MB)"))
-            print(format_table_row("Диск", f"{latest.disk_usage_percent:.1f}%"))
-
-        if metrics.errors == 0:
-            print(format_table_row("Статус", "✅ УСПЕХ"))
-            metrics.status = PipelineStatus.COMPLETED
-        else:
-            print(format_table_row("Статус", "⚠️  С ОШИБКАМИ"))
-            metrics.status = PipelineStatus.FAILED
-
-        # Логируем метрики в формате JSON для систем мониторинга
-        logger.info(f"[{metrics.correlation_id}] Метрики конвейера: {json.dumps(metrics.to_dict())}")
+        status = "✅ УСПЕХ" if metrics.errors == 0 else "⚠️  С ОШИБКАМИ"
+        print(fmt_row("Статус", status))
+        metrics.status = PipelineStatus.COMPLETED if metrics.errors == 0 else PipelineStatus.FAILED
+        logger.info(f"[{metrics.correlation_id}] Метрики: {json.dumps(metrics.to_dict())}")
         print("=" * 80)
 
-        # Финальное логирование метрик
-        logger.info(f"[{metrics.correlation_id}] Финальные метрики: {json.dumps(metrics.to_dict())}")
 
+# =========================================================================
+# Фаза 1-2: URL режим (standalone, psycopg2)
+# =========================================================================
+
+async def _phase12_url_mode(config: PipelineConfig, metrics: PipelineMetrics) -> List[Dict]:
+    """Парсинг по URL + проверка дубликатов через psycopg2."""
+
+    print(fmt_header(f"ФАЗА 1: ПАРСИНГ ПО URL ({len(config.urls)} шт.)"))
+    metrics.status = PipelineStatus.PARSING
+
+    articles_data = []
+    for i, url in enumerate(config.urls, 1):
+        url = url.strip()
+        if not url:
+            continue
+        logger.info(f"[{metrics.correlation_id}] Парсинг [{i}/{len(config.urls)}]: {url}")
+        article = await parse_habr_article(url)
+        if article:
+            articles_data.append(article)
+        else:
+            metrics.failed_urls.add(url)
+            metrics.errors += 1
+
+    metrics.total_scraped = len(articles_data)
+    print(fmt_row("Запрошено", len(config.urls)))
+    print(fmt_row("Спарсено", len(articles_data)))
+
+    if not articles_data:
+        print("Ни одна статья не спарсена")
+        metrics.status = PipelineStatus.COMPLETED
+        return []
+
+    # Проверка дубликатов
+    print(fmt_header("ФАЗА 2: ПРОВЕРКА ДУБЛИКАТОВ"))
+    metrics.status = PipelineStatus.VALIDATING
+    existing = _get_existing_urls_sync([d['url'] for d in articles_data])
+    new_data = [d for d in articles_data if d['url'] not in existing]
+
+    print(fmt_row("Уже в БД", len(existing)))
+    print(fmt_row("Новых", len(new_data)))
+
+    if not new_data:
+        print("Все статьи уже в БД")
+        metrics.status = PipelineStatus.COMPLETED
+    return new_data
+
+
+# =========================================================================
+# Фаза 1-2: Bulk режим (оригинал, через src.* / asyncpg)
+# =========================================================================
+
+async def _phase12_bulk_mode(config: PipelineConfig, metrics: PipelineMetrics) -> List[Dict]:
+    """Массовый парсинг + валидация через async DB."""
+
+    # Эти импорты тянут asyncpg — но только если мы в bulk-режиме
+    from src.scrapers.habr.scraper_service import HabrScraperService
+    from src.infrastructure.config.database import AsyncSessionLocal
+    from src.infrastructure.persistence.article_repository_impl import ArticleRepositoryImpl
+
+    print(fmt_header("ФАЗА 1: ПАРСИНГ"))
+    metrics.status = PipelineStatus.PARSING
+
+    scraper = HabrScraperService()
+    hubs_list = config.get_hubs_list()
+    parse_limit = config.limit * 3
+
+    # Кэш
+    cache_key = f"scrapped_{config.hubs}_{parse_limit}_{hash(tuple(hubs_list))}"
+    cache_path = config.get_cache_path(cache_key)
+    articles_data = []
+
+    if config.enable_cache and config.mode == OperationMode.NORMAL:
+        cached = await load_cache(cache_path)
+        if cached:
+            articles_data = cached.get('articles', [])
+            metrics.cache_hits += 1
+            logger.info(f"Из кэша: {len(articles_data)} статей")
+        else:
+            metrics.cache_misses += 1
+    else:
+        metrics.cache_misses += 1
+
+    if not articles_data:
+        try:
+            articles_data = await asyncio.wait_for(
+                scraper._scrape_articles(parse_limit, hubs_list), timeout=config.timeout
+            )
+            if config.enable_cache:
+                await save_cache(cache_path, {'articles': articles_data, 'timestamp': time.time()})
+        except asyncio.TimeoutError:
+            logger.error(f"Таймаут парсинга ({config.timeout}с)")
+            metrics.status = PipelineStatus.FAILED
+            return []
+        except Exception as e:
+            logger.error(f"Ошибка парсинга: {e}", exc_info=True)
+            metrics.status = PipelineStatus.FAILED
+            return []
+
+    metrics.total_scraped = len(articles_data)
+    if not articles_data:
+        print("Статьи не найдены")
+        metrics.status = PipelineStatus.COMPLETED
+        return []
+
+    # Валидация БД
+    print(fmt_header("ФАЗА 2: ВАЛИДАЦИЯ БД"))
+    metrics.status = PipelineStatus.VALIDATING
+    try:
+        async with AsyncSessionLocal() as session:
+            repo = ArticleRepositoryImpl(session)
+            existing = await repo.get_existing_urls([d['url'] for d in articles_data])
+            new_data = [d for d in articles_data if d['url'] not in existing][:config.limit]
+
+        print(fmt_row("Спарсено", len(articles_data)))
+        print(fmt_row("В БД", len(existing)))
+        print(fmt_row("Новых", len(new_data)))
+
+        if not new_data:
+            print("Нет новых статей")
+            metrics.status = PipelineStatus.COMPLETED
+        return new_data
+    except Exception as e:
+        logger.error(f"Ошибка валидации: {e}", exc_info=True)
+        metrics.status = PipelineStatus.FAILED
+        return []
+
+
+# =========================================================================
+# Проверка LLM провайдера
+# =========================================================================
+
+async def _check_llm_provider(config: PipelineConfig, metrics: PipelineMetrics) -> bool:
+    """Проверить доступность LLM провайдера."""
+    name = config.provider
+    if not name:
+        return False
+
+    logger.info(f"[{metrics.correlation_id}] Проверка LLM: {name.upper()}")
+
+    api_keys = {
+        "openrouter": ("OPENROUTER_API_KEY", "sk-or-"),
+        "groq": ("GROQ_API_KEY", "gsk_"),
+        "google": ("GOOGLE_API_KEY", "AIza"),
+    }
+
+    if name in api_keys:
+        env_var, _ = api_keys[name]
+        key = os.getenv(env_var)
+        if not key or "YOUR-KEY-HERE" in key or len(key) < 10:
+            logger.error(f"[{metrics.correlation_id}] {env_var} не установлен или невалиден!")
+            return False
+        logger.info(f"[{metrics.correlation_id}] ✓ {env_var}: {key[:20]}...")
+
+    if name == "ollama":
+        try:
+            import requests
+            cfg = get_models_config(provider="ollama")
+            resp = requests.get(f"{cfg.get_ollama_base_url()}/api/tags", timeout=10)
+            if resp.status_code != 200:
+                logger.error(f"Ollama недоступен: {resp.status_code}")
+                return False
+            models = resp.json().get("models", [])
+            model_name = cfg.get_ollama_model()
+            if not any(model_name in m.get("name", "") for m in models):
+                logger.error(f"Модель {model_name} не найдена в Ollama")
+                return False
+            logger.info(f"✓ Ollama: {model_name}")
+            return True
+        except Exception as e:
+            logger.error(f"Ollama: {e}")
+            return False
+
+    # Тест провайдера
+    try:
+        mcfg = get_models_config(
+            provider=name, strategy=config.strategy,
+            enable_fallback=not config.no_fallback
+        )
+        test_config = mcfg.get_llm_config("classifier")
+        from src.infrastructure.ai.llm_provider import LLMProviderFactory
+        p = LLMProviderFactory.create(test_config)
+        p.generate("Test", temperature=0.1, max_tokens=10)
+        logger.info(f"[{metrics.correlation_id}] ✓ {name.upper()} OK")
+        return True
+    except Exception as e:
+        logger.error(f"[{metrics.correlation_id}] Провайдер {name}: {e}")
+        return False
+
+
+# =========================================================================
+# CLI
+# =========================================================================
 
 if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser(
-        description='Pipeline обработки статей v3.1 (Production Enhanced)',
+        description='Pipeline обработки статей v3.2',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Примеры:
-# Стандартный запуск
-python %(prog)s 10
+  # Стандартный запуск (требует asyncpg)
+  python %(prog)s 10
 
-# С кэшированием и мониторингом
-python %(prog)s 10 --enable-cache --enable-monitoring
+  # Конкретная статья (НЕ требует asyncpg!)
+  python %(prog)s --url https://habr.com/ru/articles/123456/
 
-# С адаптивными повторами
-python %(prog)s 10 --retry-strategy adaptive --max-retries 5
+  # Несколько статей
+  python %(prog)s --url https://habr.com/ru/articles/111/,https://habr.com/ru/articles/222/
 
-# С сохранением неудачных URL
-python %(prog)s 10 --save-failed-urls --duplicate-check
-
-# Полная обработка с лимитом запросов
-python %(prog)s 10 --mode full --rate-limit 60
-
-# С публикацией в Telegraph + Telegram (score >= 7)
-python %(prog)s 10 --publish
-
-# Только Telegraph (без Telegram)
-python %(prog)s 10 --telegraph
-
-# Только Telegram (нужен Telegraph URL в БД)
-python %(prog)s 10 --telegram
-
-# Отдельно Telegraph + Telegram, мин. score 8
-python %(prog)s 10 --telegraph --telegram --min-publish-score 8
+  # С публикацией
+  python %(prog)s --url https://habr.com/ru/articles/123456/ --publish --provider groq
 """
     )
-    parser.add_argument('limit', type=int, nargs='?', default=10,
-                        help='Количество статей (default: 10)')
-    parser.add_argument('hubs', type=str, nargs='?', default="",
-                        help='Хабы через запятую (default: все)')
-
-    # LLM параметры
-    parser.add_argument('--provider', '-p',
-                        choices=['groq', 'openrouter', 'google', 'ollama'],
-                        help='LLM провайдер')
-    parser.add_argument('--no-fallback', action='store_true',
-                        help='Отключить fallback (только указанный провайдер)')
+    parser.add_argument('limit', type=int, nargs='?', default=10)
+    parser.add_argument('hubs', type=str, nargs='?', default="")
+    parser.add_argument('--url', '-u', action='append', default=None,
+                        help='URL статьи (можно несколько раз или через запятую)')
+    parser.add_argument('--provider', '-p', choices=['groq', 'openrouter', 'google', 'ollama'])
+    parser.add_argument('--no-fallback', action='store_true')
     parser.add_argument('--strategy', '-s',
-                        choices=['cost_optimized', 'balanced', 'quality_focused', 'speed_focused'],
-                        help='Стратегия выбора моделей')
-
-    # Параметры производительности
-    parser.add_argument('--max-retries', type=int, default=3,
-                        help='Макс. количество повторных попыток (default: 3)')
-    parser.add_argument('--retry-delay', type=float, default=1.0,
-                        help='Начальная задержка между попытками, сек (default: 1.0)')
+                        choices=['cost_optimized', 'balanced', 'quality_focused', 'speed_focused'])
+    parser.add_argument('--max-retries', type=int, default=3)
+    parser.add_argument('--retry-delay', type=float, default=1.0)
     parser.add_argument('--retry-strategy', choices=['exponential', 'linear', 'fixed', 'adaptive'],
-                        default='exponential', help='Стратегия повторов (default: exponential)')
-    parser.add_argument('--max-concurrent', type=int, default=5,
-                        help='Макс. количество параллельных задач (default: 5)')
-    parser.add_argument('--batch-size', type=int, default=10,
-                        help='Размер пакета для обработки (default: 10)')
-    parser.add_argument('--timeout', type=float, default=300.0,
-                        help='Таймаут операции, сек (default: 300.0)')
-
-    # Режимы работы (без DRY_RUN)
-    parser.add_argument('--mode', choices=['normal', 'resume', 'incremental', 'full'],
-                        default='normal', help='Режим работы (default: normal)')
-
-    # Кэширование и мониторинг
-    parser.add_argument('--enable-cache', action='store_true', default=True,
-                        help='Включить кэширование (default: True)')
-    parser.add_argument('--cache-dir', default='cache/pipeline',
-                        help='Директория для кэша (default: cache/pipeline)')
-    parser.add_argument('--enable-monitoring', action='store_true', default=True,
-                        help='Включить мониторинг системы (default: True)')
-    parser.add_argument('--monitoring-interval', type=float, default=30.0,
-                        help='Интервал мониторинга, сек (default: 30.0)')
-
-    # Дополнительные функции
-    parser.add_argument('--save-failed-urls', action='store_true', default=True,
-                        help='Сохранять неудачные URL (default: True)')
-    parser.add_argument('--duplicate-check', action='store_true', default=True,
-                        help='Проверять дубликаты (default: True)')
-    parser.add_argument('--rate-limit', type=int,
-                        help='Лимит запросов в минуту')
-    parser.add_argument('--health-check-interval', type=float, default=60.0,
-                        help='Интервал проверки здоровья, сек (default: 60.0)')
-
-    # Другие параметры
-    parser.add_argument('--verbose', '-v', action='store_true',
-                        help='Подробный вывод')
-    parser.add_argument('--debug', action='store_true',
-                        help='Debug режим')
-    parser.add_argument('--min-relevance', type=int, default=5,
-                        help='Мин. релевантность для Qdrant (default: 5)')
-
-    # Telegraph / Telegram публикация
-    parser.add_argument('--publish', action='store_true', default=False,
-                        help='Публиковать в Telegraph + Telegram (shortcut для --telegraph --telegram)')
-    parser.add_argument('--telegraph', action='store_true', default=False,
-                        help='Публиковать статьи на Telegraph (default: False)')
-    parser.add_argument('--telegram', action='store_true', default=False,
-                        help='Отправлять посты в Telegram-канал (default: False)')
-    parser.add_argument('--min-publish-score', type=int, default=7,
-                        help='Мин. score для публикации (default: 7)')
+                        default='exponential')
+    parser.add_argument('--max-concurrent', type=int, default=5)
+    parser.add_argument('--batch-size', type=int, default=10)
+    parser.add_argument('--timeout', type=float, default=300.0)
+    parser.add_argument('--mode', choices=['normal', 'resume', 'incremental', 'full'], default='normal')
+    parser.add_argument('--enable-cache', action='store_true', default=True)
+    parser.add_argument('--cache-dir', default='cache/pipeline')
+    parser.add_argument('--enable-monitoring', action='store_true', default=True)
+    parser.add_argument('--monitoring-interval', type=float, default=30.0)
+    parser.add_argument('--save-failed-urls', action='store_true', default=True)
+    parser.add_argument('--duplicate-check', action='store_true', default=True)
+    parser.add_argument('--rate-limit', type=int)
+    parser.add_argument('--health-check-interval', type=float, default=60.0)
+    parser.add_argument('--verbose', '-v', action='store_true')
+    parser.add_argument('--debug', action='store_true')
+    parser.add_argument('--min-relevance', type=int, default=5)
+    parser.add_argument('--publish', action='store_true', default=False)
+    parser.add_argument('--telegraph', action='store_true', default=False)
+    parser.add_argument('--telegram', action='store_true', default=False)
+    parser.add_argument('--min-publish-score', type=int, default=7)
 
     args = parser.parse_args()
+    urls = parse_url_args(args.url) if args.url else None
 
     try:
         asyncio.run(full_pipeline(
-            limit=args.limit,
-            hubs=args.hubs,
-            verbose=args.verbose,
-            min_relevance=args.min_relevance,
-            debug=args.debug,
-            provider=args.provider,
-            strategy=args.strategy,
-            no_fallback=args.no_fallback,
-            max_retries=args.max_retries,
-            retry_delay=args.retry_delay,
-            max_concurrent=args.max_concurrent,
-            batch_size=args.batch_size,
-            timeout=args.timeout,
-            mode=args.mode,
-            retry_strategy=args.retry_strategy,
-            enable_cache=args.enable_cache,
-            cache_dir=args.cache_dir,
+            limit=args.limit, hubs=args.hubs, verbose=args.verbose,
+            min_relevance=args.min_relevance, debug=args.debug,
+            provider=args.provider, strategy=args.strategy,
+            no_fallback=args.no_fallback, max_retries=args.max_retries,
+            retry_delay=args.retry_delay, max_concurrent=args.max_concurrent,
+            batch_size=args.batch_size, timeout=args.timeout,
+            mode=args.mode, retry_strategy=args.retry_strategy,
+            enable_cache=args.enable_cache, cache_dir=args.cache_dir,
             enable_monitoring=args.enable_monitoring,
             monitoring_interval=args.monitoring_interval,
             enable_save_failed_urls=args.save_failed_urls,
-            duplicate_check=args.duplicate_check,
-            rate_limit=args.rate_limit,
+            duplicate_check=args.duplicate_check, rate_limit=args.rate_limit,
             health_check_interval=args.health_check_interval,
             publish_telegraph=args.publish or args.telegraph,
             min_publish_score=args.min_publish_score,
-            publish_telegram=args.publish or args.telegram
+            publish_telegram=args.publish or args.telegram,
+            urls=urls,
         ))
     except KeyboardInterrupt:
-        print("\n⚠️  Прервано пользователем")
+        print("\n⚠️  Прервано")
         sys.exit(1)
     except Exception as e:
         logger.critical(f"Критическая ошибка: {e}", exc_info=True)
-        traceback.print_exc()
         sys.exit(1)
+
+
+# docker compose exec postgres psql -U newsaggregator -d news_aggregator -c "DELETE FROM articles WHERE url LIKE '%1004288%'"
+#
+# docker compose exec api python run_full_pipeline.py --url https://habr.com/ru/news/1004288/ -p ollama --publish --verbose
