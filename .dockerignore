@@ -54,3 +54,6 @@ test_*.py
 # Env files
 .env
 .env.*
+
+commit_split.sh
+changes.diff
