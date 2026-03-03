@@ -1,37 +1,43 @@
 #!/usr/bin/env python3
 """
-Process Existing Articles v4.1
+Process Existing Articles v4.2
 
 AI обработка статей, уже находящихся в базе данных.
 
-Версия 4.1.0:
-- Поддержка --provider (groq, openrouter, google, ollama)
-- Поддержка --no-fallback (только один провайдер)
-- Поддержка --strategy (cost_optimized, balanced, quality_focused)
+Способы выбора статей:
+  1) По умолчанию — все необработанные (relevance_score IS NULL)
+  2) --url       — конкретная статья по URL
+  3) --id        — конкретная статья по UUID
+  4) --reprocess-all — все статьи, включая обработанные
+  5) --days N    — только за последние N дней
+  6) --limit N   — ограничить количество
+
+Изменения v4.2:
+- --url / --id для выбора конкретных статей
+- psycopg2 fallback для --url/--id (работает без asyncpg)
+- Ленивые импорты src.* (не падает без asyncpg)
 """
 
 import asyncio
 import sys
+import os
 import time
+import json
 import logging
+import uuid
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 
 try:
     from tqdm import tqdm
+
     HAS_TQDM = True
 except ImportError:
     HAS_TQDM = False
 
-from src.application.ai_services.orchestrator import AIOrchestrator
-from src.infrastructure.ai.qdrant_client import QdrantService
-from src.infrastructure.config.database import AsyncSessionLocal
-from src.infrastructure.persistence.article_repository_impl import ArticleRepositoryImpl
-from src.config.models_config import get_models_config, reset_models_config
-from sqlalchemy import select
-from src.infrastructure.persistence.models import ArticleModel
+# НЕ импортируем src.* на верхнем уровне — чтобы не тянуть asyncpg
+# Все src.* импорты ленивые, внутри функций
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s | %(levelname)-8s | %(message)s',
@@ -40,33 +46,183 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def format_section_header(title: str, char: str = "=", width: int = 80) -> str:
-    return f"\n{char * width}\n{title}\n{char * width}"
+# =========================================================================
+# Форматирование
+# =========================================================================
+
+def fmt_header(title, char="=", w=80):
+    return f"\n{char * w}\n{title}\n{char * w}"
 
 
-def format_subsection(title: str, width: int = 80) -> str:
-    return f"\n{'-' * width}\n{title}\n{'-' * width}"
+def fmt_sub(title, w=80):
+    return f"\n{'-' * w}\n{title}\n{'-' * w}"
 
 
-def format_table_row(label: str, value: Any, width: int = 80) -> str:
-    label_str = f"  {label}:"
-    value_str = str(value)
-    dots = width - len(label_str) - len(value_str)
-    return f"{label_str}{' ' * dots}{value_str}"
+def fmt_row(label, value, w=80):
+    l = f"  {label}:"
+    v = str(value)
+    return f"{l}{' ' * max(1, w - len(l) - len(v))}{v}"
 
+
+# =========================================================================
+# psycopg2: загрузка статей из БД (для --url / --id режима)
+# =========================================================================
+
+def _get_db_connection_string() -> str:
+    db_url = os.getenv('DATABASE_URL')
+    if db_url:
+        return db_url.replace('postgresql+asyncpg://', 'postgresql://')
+    user = os.getenv('POSTGRES_USER', 'newsaggregator')
+    password = os.getenv('POSTGRES_PASSWORD', 'changeme123')
+    host = os.getenv('POSTGRES_HOST', 'localhost')
+    port = os.getenv('POSTGRES_PORT', '5433')
+    db = os.getenv('POSTGRES_DB', 'news_aggregator')
+    return f"postgresql://{user}:{password}@{host}:{port}/{db}"
+
+
+def _row_to_dict(row, columns) -> Dict[str, Any]:
+    """Конвертировать строку psycopg2 в словарь."""
+    return dict(zip(columns, row))
+
+
+def _load_articles_sync(
+        urls: Optional[List[str]] = None,
+        ids: Optional[List[str]] = None,
+        limit: Optional[int] = None,
+        days: Optional[int] = None,
+        reprocess_all: bool = False,
+) -> List[Dict[str, Any]]:
+    """
+    Загрузить статьи из БД через psycopg2.
+
+    Returns:
+        Список словарей с полями статьи
+    """
+    import psycopg2
+    import psycopg2.extras
+
+    conn = psycopg2.connect(_get_db_connection_string())
+    cur = conn.cursor()
+
+    # Базовые колонки
+    columns = [
+        'id', 'title', 'content', 'url', 'source',
+        'author', 'published_at', 'created_at', 'updated_at',
+        'status', 'is_news', 'relevance_score', 'relevance_reason',
+        'editorial_title', 'editorial_teaser', 'editorial_rewritten',
+        'tags', 'hubs', 'images',
+    ]
+    select_cols = ', '.join(columns)
+
+    conditions = []
+    params = []
+
+    # Фильтр по URL
+    if urls:
+        conditions.append("url = ANY(%s)")
+        params.append(urls)
+
+    # Фильтр по ID
+    elif ids:
+        conditions.append("id = ANY(%s::uuid[])")
+        params.append(ids)
+
+    else:
+        # Стандартные фильтры
+        if not reprocess_all:
+            conditions.append("relevance_score IS NULL")
+
+        if days:
+            conditions.append("created_at >= %s")
+            params.append(datetime.utcnow() - timedelta(days=days))
+
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    order = "ORDER BY created_at DESC"
+    limit_clause = f"LIMIT {limit}" if limit else ""
+
+    sql = f"SELECT {select_cols} FROM articles {where} {order} {limit_clause}"
+
+    cur.execute(sql, params)
+    rows = cur.fetchall()
+
+    cur.close()
+    conn.close()
+
+    return [_row_to_dict(row, columns) for row in rows]
+
+
+def _update_article_after_ai(article_id: str, processed_article) -> bool:
+    """
+    Обновить статью в БД после AI обработки (psycopg2).
+
+    Записывает все AI-поля: relevance_score, editorial_title, и т.д.
+    """
+    import psycopg2
+
+    try:
+        conn = psycopg2.connect(_get_db_connection_string())
+        cur = conn.cursor()
+
+        cur.execute("""
+            UPDATE articles SET
+                is_news = %s,
+                relevance_score = %s,
+                relevance_reason = %s,
+                editorial_title = %s,
+                editorial_teaser = %s,
+                editorial_rewritten = %s,
+                telegram_post_text = %s,
+                telegram_cover_image = %s,
+                telegraph_content_html = %s,
+                status = %s,
+                updated_at = %s,
+                article_metadata = %s
+            WHERE id = %s
+        """, (
+            getattr(processed_article, 'is_news', False),
+            processed_article.relevance_score,
+            getattr(processed_article, 'relevance_reason', None),
+            getattr(processed_article, 'editorial_title', None),
+            getattr(processed_article, 'editorial_teaser', None),
+            getattr(processed_article, 'editorial_rewritten', None),
+            getattr(processed_article, 'telegram_post_text', None),
+            getattr(processed_article, 'telegram_cover_image', None),
+            getattr(processed_article, 'telegraph_content_html', None),
+            'processed',
+            datetime.utcnow(),
+            json.dumps(getattr(processed_article, 'metadata', {}) or {}, ensure_ascii=False),
+            str(article_id),
+        ))
+
+        updated = cur.rowcount > 0
+        conn.commit()
+        cur.close()
+        conn.close()
+        return updated
+
+    except Exception as e:
+        logger.error(f"DB update ошибка для {article_id}: {e}")
+        return False
+
+
+# =========================================================================
+# Основной конвейер
+# =========================================================================
 
 async def process_existing_articles(
-    limit: Optional[int] = None,
-    days: Optional[int] = None,
-    reprocess_all: bool = False,
-    min_relevance: int = 5,
-    debug: bool = False,
-    provider: Optional[str] = None,
-    strategy: Optional[str] = None,
-    no_fallback: bool = False
+        limit: Optional[int] = None,
+        days: Optional[int] = None,
+        reprocess_all: bool = False,
+        min_relevance: int = 5,
+        debug: bool = False,
+        provider: Optional[str] = None,
+        strategy: Optional[str] = None,
+        no_fallback: bool = False,
+        urls: Optional[List[str]] = None,
+        ids: Optional[List[str]] = None,
 ):
     """
-    Обработка существующих статей из БД.
+    AI обработка существующих статей из БД.
 
     Args:
         limit: Макс. количество статей
@@ -74,49 +230,71 @@ async def process_existing_articles(
         reprocess_all: Переобработать все (включая уже обработанные)
         min_relevance: Мин. score для Qdrant
         debug: Debug режим
-        provider: LLM провайдер (groq, openrouter, google, ollama)
+        provider: LLM провайдер
         strategy: Стратегия выбора моделей
         no_fallback: Отключить fallback
+        urls: Список URL для обработки конкретных статей
+        ids: Список UUID для обработки конкретных статей
     """
     if debug:
         logging.getLogger().setLevel(logging.DEBUG)
 
     pipeline_start = time.time()
 
-    # Header
-    print(format_section_header("AI PROCESSING PIPELINE v4.1"))
-    print(format_table_row("Версия", "4.1.0"))
-    print(format_table_row("Запущен", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-    print(format_table_row("Режим", "Переобработать всё" if reprocess_all else "Только необработанные"))
-    print(format_table_row("Лимит", limit if limit else "Без лимита"))
-    print(format_table_row("Период", f"Последние {days} дней" if days else "Всё время"))
-    print(format_table_row("Мин. релевантность", f"{min_relevance}/10"))
+    # Определяем режим
+    if urls:
+        mode_label = f"По URL ({len(urls)} шт.)"
+    elif ids:
+        mode_label = f"По ID ({len(ids)} шт.)"
+    elif reprocess_all:
+        mode_label = "Переобработать всё"
+    else:
+        mode_label = "Только необработанные"
 
-    # Конфигурация LLM
-    print(format_subsection("КОНФИГУРАЦИЯ LLM"))
-    
+    # Header
+    print(fmt_header("AI PROCESSING PIPELINE v4.2"))
+    print(fmt_row("Версия", "4.2.0"))
+    print(fmt_row("Запущен", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+    print(fmt_row("Режим", mode_label))
+    print(fmt_row("Лимит", limit if limit else "Без лимита"))
+    print(fmt_row("Период", f"Последние {days} дней" if days else "Всё время"))
+    print(fmt_row("Мин. релевантность", f"{min_relevance}/10"))
+
+    if urls:
+        for i, u in enumerate(urls, 1):
+            print(fmt_row(f"  URL [{i}]", u[:70]))
+    if ids:
+        for i, aid in enumerate(ids, 1):
+            print(fmt_row(f"  ID [{i}]", aid))
+
+    # --- LLM конфигурация ---
+    print(fmt_sub("КОНФИГУРАЦИЯ LLM"))
+
+    from src.config.models_config import get_models_config, reset_models_config
+
     if provider:
         reset_models_config()
-    
+
     config = get_models_config(
         provider=provider,
         strategy=strategy,
         enable_fallback=not no_fallback if no_fallback else None,
         force_new=bool(provider)
     )
-    
-    print(format_table_row("Провайдер", config.provider_name.upper()))
-    print(format_table_row("Стратегия", config.strategy))
-    print(format_table_row("Fallback", "ВЫКЛЮЧЕН ⚠️" if not config.enable_fallback else "ВКЛЮЧЁН ✓"))
-    
+
+    print(fmt_row("Провайдер", config.provider_name.upper()))
+    print(fmt_row("Стратегия", config.strategy))
+    print(fmt_row("Fallback", "ВЫКЛЮЧЕН ⚠️" if not config.enable_fallback else "ВКЛЮЧЁН ✓"))
+
     if config.enable_fallback:
         chain = config.get_fallback_providers()
-        print(format_table_row("Цепочка fallback", " → ".join(chain)))
+        print(fmt_row("Цепочка fallback", " → ".join(chain)))
 
-    # Initialize services
-    print(format_subsection("ИНИЦИАЛИЗАЦИЯ СЕРВИСОВ"))
+    # --- Инициализация AI сервисов ---
+    print(fmt_sub("ИНИЦИАЛИЗАЦИЯ СЕРВИСОВ"))
 
     try:
+        from src.application.ai_services.orchestrator import AIOrchestrator
         orchestrator = AIOrchestrator(
             provider=provider,
             strategy=strategy,
@@ -125,214 +303,260 @@ async def process_existing_articles(
             max_retries=2
         )
         logger.info("✓ AIOrchestrator")
+    except Exception as e:
+        logger.error(f"Ошибка инициализации AIOrchestrator: {e}")
+        return
 
+    qdrant = None
+    try:
+        from src.infrastructure.ai.qdrant_client import QdrantService
         qdrant = QdrantService()
         logger.info("✓ QdrantService")
-
     except Exception as e:
-        logger.error(f"Ошибка инициализации: {e}")
-        return
+        logger.warning(f"Qdrant недоступен: {e}")
 
-    # System checks
-    print(format_subsection("ПРОВЕРКА СИСТЕМ"))
+    # --- Загрузка статей ---
+    print(fmt_header("ЗАГРУЗКА СТАТЕЙ"))
 
-    # PostgreSQL
     try:
-        async with AsyncSessionLocal() as test_session:
-            await test_session.execute(select(ArticleModel).limit(1))
-        logger.info("✓ PostgreSQL: OK")
+        article_rows = _load_articles_sync(
+            urls=urls, ids=ids, limit=limit,
+            days=days, reprocess_all=reprocess_all,
+        )
     except Exception as e:
-        logger.error(f"PostgreSQL ошибка: {e}")
+        logger.error(f"Ошибка загрузки из БД: {e}")
         return
 
-    logger.info("✓ Qdrant: OK")
+    print(fmt_row("Найдено статей", len(article_rows)))
 
-    # Load articles from database
-    print(format_section_header("ЗАГРУЗКА СТАТЕЙ"))
+    if not article_rows:
+        print(fmt_row("Статус", "Нет статей для обработки"))
+        if not urls and not ids and not reprocess_all:
+            print(fmt_row("Совет", "Попробуйте --reprocess-all или --url <link>"))
+        return
 
-    async with AsyncSessionLocal() as session:
-        repo = ArticleRepositoryImpl(session)
+    # Список статей
+    print(fmt_sub("ОЧЕРЕДЬ СТАТЕЙ"))
+    for idx, row in enumerate(article_rows[:10], 1):
+        title = row.get('title', '')
+        short = title[:55] + "..." if len(title) > 55 else title
+        score = row.get('relevance_score')
+        score_str = f" [score={score}]" if score is not None else ""
+        print(f"  {idx:2d}. {short}{score_str}")
+    if len(article_rows) > 10:
+        print(f"  ... и ещё {len(article_rows) - 10}")
 
-        # Build query
-        query = select(ArticleModel)
+    # --- Конвертация в Article entity ---
+    from src.domain.entities.article import Article
+    from src.domain.value_objects.source_type import SourceType
 
-        if not reprocess_all:
-            query = query.where(ArticleModel.relevance_score.is_(None))
-            logger.info("Фильтр: только необработанные")
+    def row_to_article(row: Dict) -> Article:
+        """Конвертировать строку БД в Article entity."""
+        source_str = row.get('source', 'habr')
+        try:
+            source = SourceType(source_str)
+        except ValueError:
+            source = SourceType.HABR
 
-        if days:
-            cutoff_date = datetime.utcnow() - timedelta(days=days)
-            query = query.where(ArticleModel.created_at >= cutoff_date)
-            logger.info(f"Фильтр по времени: >= {cutoff_date.strftime('%Y-%m-%d')}")
+        return Article(
+            id=row['id'] if isinstance(row['id'], uuid.UUID) else uuid.UUID(str(row['id'])),
+            title=row.get('title', ''),
+            content=row.get('content', ''),
+            url=row.get('url'),
+            source=source,
+            author=row.get('author'),
+            published_at=row.get('published_at'),
+            created_at=row.get('created_at', datetime.utcnow()),
+            updated_at=row.get('updated_at', datetime.utcnow()),
+            is_news=row.get('is_news', False),
+            relevance_score=row.get('relevance_score'),
+            relevance_reason=row.get('relevance_reason'),
+            editorial_title=row.get('editorial_title'),
+            editorial_teaser=row.get('editorial_teaser'),
+            editorial_rewritten=row.get('editorial_rewritten'),
+            tags=row.get('tags') or [],
+            hubs=row.get('hubs') or [],
+            images=row.get('images') or [],
+        )
 
-        query = query.order_by(ArticleModel.created_at.desc())
-        if limit:
-            query = query.limit(limit)
+    articles = [row_to_article(row) for row in article_rows]
 
-        # Execute query
-        result = await session.execute(query)
-        models = result.scalars().all()
+    # --- Статистика ---
+    stats = {
+        'total': len(articles),
+        'processed': 0,
+        'saved_to_db': 0,
+        'saved_to_qdrant': 0,
+        'low_relevance': 0,
+        'errors': 0,
+        'article_times': [],
+    }
 
-        print(format_table_row("Найдено статей", len(models)))
+    # --- AI обработка ---
+    print(fmt_header("AI ОБРАБОТКА"))
 
-        if len(models) == 0:
-            print(format_table_row("Статус", "Нет статей для обработки"))
-            print(format_table_row("Совет", "Попробуйте --reprocess-all"))
-            return
+    pbar = tqdm(total=len(articles), desc="Обработка") if HAS_TQDM and not debug else None
 
-        # Convert to entities
-        articles = [repo._to_entity(model) for model in models]
+    for i, article in enumerate(articles, 1):
+        article_start = time.time()
+        short_title = article.title[:40] + "..." if len(article.title) > 40 else article.title
 
-        # Display article list
-        print(format_subsection("ОЧЕРЕДЬ СТАТЕЙ"))
-        for idx, art in enumerate(articles[:5], 1):
-            short_title = art.title[:55] + "..." if len(art.title) > 55 else art.title
-            print(f"  {idx:2d}. {short_title}")
-        if len(articles) > 5:
-            print(f"  ... и ещё {len(articles) - 5}")
+        try:
+            logger.info(f"[{i}/{len(articles)}] {short_title}")
 
-        # Statistics
-        stats = {
-            'total': len(articles),
-            'processed': 0,
-            'saved_to_qdrant': 0,
-            'low_relevance': 0,
-            'errors': 0,
-            'article_times': [],
-            'db_save_times': [],
-            'qdrant_save_times': []
-        }
+            # AI
+            ai_start = time.time()
+            processed = orchestrator.process_article(
+                article,
+                normalize_style=True,
+                validate_quality=True,
+                verbose=debug,
+                min_relevance=min_relevance
+            )
+            ai_time = time.time() - ai_start
 
-        # Process articles
-        print(format_section_header("AI ОБРАБОТКА"))
-
-        pbar = tqdm(total=len(articles), desc="Обработка") if HAS_TQDM and not debug else None
-
-        for i, article in enumerate(articles, 1):
-            article_start = time.time()
-            short_title = article.title[:40] + "..." if len(article.title) > 40 else article.title
-
-            try:
-                logger.info(f"[{i}/{len(articles)}] {short_title}")
-
-                # AI Processing
-                ai_start = time.time()
-                processed_article = orchestrator.process_article(
-                    article,
-                    normalize_style=True,
-                    validate_quality=True,
-                    verbose=debug,
-                    min_relevance=min_relevance
-                )
-                ai_time = time.time() - ai_start
-
-                if processed_article is None:
-                    stats['errors'] += 1
-                    if pbar:
-                        pbar.update(1)
-                    continue
-
-                score = processed_article.relevance_score or 0
-
-                # Database save
-                db_start = time.time()
-                await repo.save(processed_article)
-                await session.commit()
-                db_time = time.time() - db_start
-                
-                stats['db_save_times'].append(db_time)
-                stats['processed'] += 1
-
-                # Qdrant
-                if score >= min_relevance:
-                    qdrant_start = time.time()
-                    qdrant.add_article(
-                        str(processed_article.id),
-                        processed_article.title,
-                        processed_article.content or ""
-                    )
-                    qdrant_time = time.time() - qdrant_start
-                    stats['qdrant_save_times'].append(qdrant_time)
-                    stats['saved_to_qdrant'] += 1
-                else:
-                    stats['low_relevance'] += 1
-
-                article_time = time.time() - article_start
-                stats['article_times'].append(article_time)
-
-                if pbar:
-                    pbar.update(1)
-                    pbar.set_postfix({'score': f"{score}/10", 'time': f"{article_time:.1f}s"})
-
-                logger.debug(f"Готово: AI={ai_time:.2f}s, DB={db_time:.2f}s")
-
-            except Exception as e:
+            if processed is None:
+                logger.warning(f"[{i}] AI вернул None")
                 stats['errors'] += 1
-                logger.error(f"Ошибка [{i}]: {e}")
-                if debug:
-                    import traceback
-                    traceback.print_exc()
                 if pbar:
                     pbar.update(1)
+                continue
 
-        if pbar:
-            pbar.close()
+            score = processed.relevance_score or 0
+            stats['processed'] += 1
 
-    # Final statistics
+            # DB save (psycopg2)
+            db_start = time.time()
+            if _update_article_after_ai(str(article.id), processed):
+                stats['saved_to_db'] += 1
+                db_time = time.time() - db_start
+                logger.info(f"[{i}] ✅ DB OK ({db_time:.2f}s)")
+            else:
+                logger.warning(f"[{i}] ⚠️ DB: не обновлено")
+
+            # Qdrant
+            if qdrant and score >= min_relevance:
+                try:
+                    qdrant.add_article(
+                        str(processed.id), processed.title, processed.content or ""
+                    )
+                    stats['saved_to_qdrant'] += 1
+                except Exception as e:
+                    logger.warning(f"[{i}] Qdrant: {e}")
+            elif score < min_relevance:
+                stats['low_relevance'] += 1
+
+            article_time = time.time() - article_start
+            stats['article_times'].append(article_time)
+
+            logger.info(
+                f"[{i}] Score: {score}/10 | "
+                f"{'НОВОСТЬ' if getattr(processed, 'is_news', False) else 'СТАТЬЯ'} | "
+                f"{article_time:.1f}s"
+            )
+
+            if pbar:
+                pbar.update(1)
+                pbar.set_postfix({'score': f"{score}/10", 'time': f"{article_time:.1f}s"})
+
+        except Exception as e:
+            stats['errors'] += 1
+            logger.error(f"[{i}] Ошибка: {e}")
+            if debug:
+                import traceback
+                traceback.print_exc()
+            if pbar:
+                pbar.update(1)
+
+    if pbar:
+        pbar.close()
+
+    # --- Результаты ---
     pipeline_time = time.time() - pipeline_start
 
-    print(format_section_header("РЕЗУЛЬТАТЫ"))
+    print(fmt_header("РЕЗУЛЬТАТЫ"))
 
-    print(format_subsection("СТАТИСТИКА"))
-    print(format_table_row("Провайдер", config.provider_name.upper()))
-    print(format_table_row("Всего статей", stats['total']))
-    print(format_table_row("Обработано", stats['processed']))
-    print(format_table_row("В Qdrant", stats['saved_to_qdrant']))
-    print(format_table_row("Низкая релевантность", stats['low_relevance']))
-    print(format_table_row("Ошибок", stats['errors']))
+    print(fmt_sub("СТАТИСТИКА"))
+    print(fmt_row("Провайдер", config.provider_name.upper()))
+    print(fmt_row("Режим", mode_label))
+    print(fmt_row("Всего статей", stats['total']))
+    print(fmt_row("AI обработано", stats['processed']))
+    print(fmt_row("Сохранено в БД", stats['saved_to_db']))
+    print(fmt_row("В Qdrant", stats['saved_to_qdrant']))
+    print(fmt_row("Низкая релевантность", stats['low_relevance']))
+    print(fmt_row("Ошибок", stats['errors']))
 
-    print(format_subsection("ПРОИЗВОДИТЕЛЬНОСТЬ"))
+    print(fmt_sub("ПРОИЗВОДИТЕЛЬНОСТЬ"))
     if stats['article_times']:
-        avg_time = sum(stats['article_times']) / len(stats['article_times'])
-        print(format_table_row("Среднее время", f"{avg_time:.2f}с"))
-        print(format_table_row("Мин. время", f"{min(stats['article_times']):.2f}с"))
-        print(format_table_row("Макс. время", f"{max(stats['article_times']):.2f}с"))
+        avg_t = sum(stats['article_times']) / len(stats['article_times'])
+        print(fmt_row("Среднее время", f"{avg_t:.2f}с"))
+        print(fmt_row("Мин. время", f"{min(stats['article_times']):.2f}с"))
+        print(fmt_row("Макс. время", f"{max(stats['article_times']):.2f}с"))
 
-    print(format_table_row("Общее время", f"{pipeline_time:.2f}с ({pipeline_time/60:.1f} мин)"))
+    print(fmt_row("Общее время", f"{pipeline_time:.2f}с ({pipeline_time / 60:.1f} мин)"))
 
     if stats['processed'] > 0:
         throughput = stats['processed'] / pipeline_time
-        print(format_table_row("Throughput", f"{throughput:.2f} статей/сек"))
+        print(fmt_row("Throughput", f"{throughput:.2f} статей/сек"))
 
-    # Status
-    print(format_subsection("СТАТУС"))
+    print(fmt_sub("СТАТУС"))
     if stats['errors'] == 0:
-        print(format_table_row("Статус", "✅ УСПЕХ"))
+        print(fmt_row("Статус", "✅ УСПЕХ"))
     elif stats['errors'] < stats['total'] * 0.1:
-        print(format_table_row("Статус", "⚠️  Незначительные ошибки (<10%)"))
+        print(fmt_row("Статус", "⚠️  Незначительные ошибки (<10%)"))
     else:
-        print(format_table_row("Статус", "❌ Значительные ошибки"))
+        print(fmt_row("Статус", "❌ Значительные ошибки"))
 
-    print(format_table_row("Завершён", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+    print(fmt_row("Завершён", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
     print("=" * 80 + "\n")
+
+
+# =========================================================================
+# CLI
+# =========================================================================
+
+def parse_urls(raw: List[str]) -> List[str]:
+    result = []
+    for item in raw:
+        for url in item.split(','):
+            url = url.strip()
+            if url:
+                result.append(url)
+    return result
+
+
+def parse_ids(raw: List[str]) -> List[str]:
+    result = []
+    for item in raw:
+        for aid in item.split(','):
+            aid = aid.strip()
+            if aid:
+                result.append(aid)
+    return result
 
 
 if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser(
-        description='AI обработка существующих статей v4.1',
+        description='AI обработка существующих статей v4.2',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Примеры:
   # Обработать все необработанные статьи
   python %(prog)s
 
-  # Обработать 10 статей с Groq
+  # Обработать 10 необработанных с Groq
   python %(prog)s --limit 10 --provider groq
 
-  # Groq без fallback
-  python %(prog)s --limit 10 --provider groq --no-fallback
+  # Конкретная статья по URL
+  python %(prog)s --url https://habr.com/ru/news/1004288/
+
+  # Конкретная статья по ID
+  python %(prog)s --id 550e8400-e29b-41d4-a716-446655440000
+
+  # Несколько статей по URL
+  python %(prog)s --url https://habr.com/ru/articles/111/,https://habr.com/ru/articles/222/
 
   # Переобработать статьи за неделю
   python %(prog)s --days 7 --reprocess-all --provider google
@@ -342,29 +566,38 @@ if __name__ == '__main__':
         """
     )
 
+    # Выбор статей
+    parser.add_argument('--url', '-u', action='append', default=None,
+                        help='URL статьи из БД (можно несколько раз или через запятую)')
+    parser.add_argument('--id', action='append', default=None,
+                        help='UUID статьи из БД (можно несколько раз или через запятую)')
     parser.add_argument('--limit', type=int, metavar='N',
                         help='Макс. количество статей')
     parser.add_argument('--days', type=int, metavar='N',
                         help='Только статьи за последние N дней')
     parser.add_argument('--reprocess-all', action='store_true',
-                        help='Переобработать все статьи')
+                        help='Переобработать все статьи (включая уже обработанные)')
+
+    # AI параметры
     parser.add_argument('--min-relevance', type=int, default=5, metavar='N',
                         help='Мин. score для Qdrant (default: 5)')
-    
-    # LLM параметры
     parser.add_argument('--provider', '-p',
                         choices=['groq', 'openrouter', 'google', 'ollama'],
                         help='LLM провайдер')
     parser.add_argument('--no-fallback', action='store_true',
-                        help='Отключить fallback (только указанный провайдер)')
+                        help='Отключить fallback')
     parser.add_argument('--strategy', '-s',
                         choices=['cost_optimized', 'balanced', 'quality_focused', 'speed_focused'],
                         help='Стратегия выбора моделей')
-    
+
     parser.add_argument('--debug', action='store_true',
                         help='Debug режим')
 
     args = parser.parse_args()
+
+    # Нормализация
+    urls = parse_urls(args.url) if args.url else None
+    ids = parse_ids(args.id) if args.id else None
 
     try:
         asyncio.run(process_existing_articles(
@@ -375,7 +608,9 @@ if __name__ == '__main__':
             debug=args.debug,
             provider=args.provider,
             strategy=args.strategy,
-            no_fallback=args.no_fallback
+            no_fallback=args.no_fallback,
+            urls=urls,
+            ids=ids,
         ))
     except KeyboardInterrupt:
         print("\n⚠️  Прервано")
@@ -383,5 +618,6 @@ if __name__ == '__main__':
     except Exception as e:
         logger.critical(f"Критическая ошибка: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
