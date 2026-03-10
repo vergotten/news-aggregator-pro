@@ -1,0 +1,8 @@
+# requirements-actions.txt
+# Минимальные зависимости для GitHub Actions
+# (scrape + publish + rss)
+
+psycopg2-binary>=2.9
+requests>=2.31
+aiohttp>=3.9
+beautifulsoup4>=4.12

@@ -908,7 +908,7 @@ async def full_pipeline(
 
                     result = telegraph_pub.create_page(
                         title=t_title, content=t_content, images=t_images,
-                        author_name=processed_article.author, source_url=processed_article.url,
+                        author_name=processed_article.author,
                     )
                     if result.success and result.url:
                         telegraph_url = result.url
@@ -921,18 +921,23 @@ async def full_pipeline(
                     logger.error(f"  [{idx}/{total}] ❌ Telegraph: {e}")
 
             # --- ШАГ 5: Telegram ---
-            if telegram_pub and score >= config.min_publish_score and telegraph_url:
+            if telegram_pub and score >= config.min_publish_score:
                 try:
-                    t_title = getattr(processed_article, 'editorial_title', None) or processed_article.title
-                    t_teaser = getattr(processed_article, 'editorial_teaser', None) or ""
-                    t_tags = processed_article.tags or getattr(processed_article, 'hubs', []) or []
-                    t_source = processed_article.source.value if hasattr(processed_article.source, 'value') else str(processed_article.source)
-
-                    tg_result = await telegram_pub.send_article_post(
-                        title=t_title, telegraph_url=telegraph_url, teaser=t_teaser,
-                        tags=t_tags, source_url=processed_article.url, source_name=t_source,
-                    )
-                    if tg_result.success:
+                    tg_post_text = getattr(processed_article, 'telegram_post_text', None)
+                    if tg_post_text and telegraph_url:
+                        tg_post_text = tg_post_text.replace("📖 Читать полностью → {TELEGRAPH_URL}", f'📖 <a href="{telegraph_url}">Читать полностью →</a>')
+                        logger.info(f"  [{idx}/{total}] 📱 Telegram: full post, {len(tg_post_text)} chars")
+                        tg_result = await telegram_pub.send_message(tg_post_text)
+                    elif telegraph_url:
+                        t_title = getattr(processed_article, 'editorial_title', None) or processed_article.title
+                        t_teaser = getattr(processed_article, 'editorial_teaser', None) or ""
+                        t_tags = processed_article.tags or getattr(processed_article, 'hubs', []) or []
+                        logger.info(f"  [{idx}/{total}] 📱 Telegram: fallback short post")
+                        tg_result = await telegram_pub.send_article_post(title=t_title, telegraph_url=telegraph_url, teaser=t_teaser, tags=t_tags)
+                    else:
+                        logger.warning(f"  [{idx}/{total}] Telegram: no Telegraph URL, skip")
+                        tg_result = None
+                    if tg_result and tg_result.success:
                         metrics.sent_to_telegram += 1
                         logger.info(f"  [{idx}/{total}] ✅ Telegram OK (msg_id={tg_result.message_id})")
                     else:
@@ -1258,7 +1263,7 @@ if __name__ == '__main__':
             duplicate_check=args.duplicate_check, rate_limit=args.rate_limit,
             health_check_interval=args.health_check_interval,
             publish_telegraph=args.publish or args.telegraph,
-            min_publish_score=args.min_publish_score,
+            min_publish_score=args.min_publish_score if args.min_publish_score != 7 else args.min_relevance,
             publish_telegram=args.publish or args.telegram,
             urls=urls,
         ))
@@ -1273,3 +1278,5 @@ if __name__ == '__main__':
 # docker compose exec postgres psql -U newsaggregator -d news_aggregator -c "DELETE FROM articles WHERE url LIKE '%1004288%'"
 #
 # docker compose exec api python run_full_pipeline.py --url https://habr.com/ru/news/1004288/ -p ollama --publish --verbose
+
+# docker compose exec api python run_full_pipeline.py --url https://habr.com/ru/articles/1006098/ -p ollama --publish --min-relevance 1 --verbose

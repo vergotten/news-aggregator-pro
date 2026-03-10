@@ -1,0 +1,85 @@
+# .github/workflows/publish.yml
+# Ежедневная публикация обработанных статей
+#
+# 1. Берёт из Supabase статьи status=processed + score >= 7
+# 2. Публикует в Telegraph
+# 3. Отправляет в Telegram
+# 4. Генерирует RSS feed
+# 5. Коммитит feed.xml → GitHub Pages
+
+name: Publish & RSS
+
+on:
+  schedule:
+    # Каждый день в 09:00 UTC (12:00 MSK)
+    - cron: '0 9 * * *'
+
+  workflow_dispatch:
+    inputs:
+      min_score:
+        description: 'Минимальный score для публикации'
+        required: false
+        default: '7'
+      limit:
+        description: 'Макс. количество публикаций'
+        required: false
+        default: '10'
+      no_telegram:
+        description: 'Пропустить Telegram'
+        required: false
+        type: boolean
+        default: false
+      dry_run:
+        description: 'Dry run (показать без публикации)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements-actions.txt
+
+      - name: Publish pending articles
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python publish_pending.py \
+            --min-score ${{ github.event.inputs.min_score || '7' }} \
+            --limit ${{ github.event.inputs.limit || '10' }} \
+            ${{ github.event.inputs.no_telegram == 'true' && '--no-telegram' || '' }} \
+            ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '' }} \
+            --verbose
+
+      - name: Generate RSS feed
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python generate_rss.py \
+            --output docs/feed.xml \
+            --limit 50 \
+            --verbose
+
+      - name: Commit RSS feed
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/feed.xml
+          git diff --cached --quiet || git commit -m "Update RSS feed [skip ci]"
+          git push
