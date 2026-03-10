@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Простой запуск парсера (без AI обработки) v4.2
+Простой запуск парсера (без AI обработки) v4.3
 
-Два режима работы:
-  1) Массовый сбор (по умолчанию) — использует src.scrapers + async DB (требует asyncpg)
-  2) --url режим — standalone парсинг + psycopg2 для сохранения (без asyncpg)
+Три режима работы:
+  1) По умолчанию — src.scrapers + async DB (требует asyncpg + Docker)
+  2) --url       — парсинг конкретных статей (standalone, psycopg2)
+  3) --feed      — парсинг ленты Habr (standalone, psycopg2, для GitHub Actions)
 
-Изменения v4.2:
-- Добавлен --url для парсинга конкретных статей по ссылке
-- --url режим: standalone парсер + psycopg2 (без async стека)
-- Поддержка нескольких URL через запятую или повтор --url
-- --no-save для парсинга без записи в БД
+Изменения v4.3:
+- --feed режим: standalone парсинг ленты + psycopg2 (для GitHub Actions)
+- Проверка articles_archive при дедупликации
+- --hubs для фильтрации в --feed режиме
 """
 
 import asyncio
@@ -25,6 +25,14 @@ from datetime import datetime
 
 import aiohttp
 from bs4 import BeautifulSoup
+
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s | %(levelname)-8s | %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 
 # =========================================================================
@@ -361,9 +369,9 @@ async def run_habr_scraper(limit: int = 10, hubs: str = "", verbose: bool = Fals
     from src.scrapers.habr.scraper_service import HabrScraperService
 
     print(f"\n{'=' * 60}")
-    print(f"🚀 HABR SCRAPER v4.2 (без AI обработки)")
+    print(f"🚀 HABR SCRAPER v4.3 (без AI обработки)")
     print(f"{'=' * 60}")
-    print(f"  Режим:        массовый сбор")
+    print(f"  Режим:        массовый сбор (Docker)")
     print(f"  Лимит статей: {limit}")
     print(f"  Хабы:         {hubs if hubs else 'все'}")
     print(f"{'=' * 60}\n")
@@ -401,6 +409,164 @@ async def run_habr_scraper(limit: int = 10, hubs: str = "", verbose: bool = Fals
 
 
 # =========================================================================
+# --feed режим: standalone парсинг ленты Habr (для GitHub Actions)
+#
+# Не импортирует src.*, работает с psycopg2.
+# Парсит страницу ленты, извлекает ссылки, парсит каждую статью.
+# Проверяет дубликаты и в articles, и в articles_archive.
+# =========================================================================
+
+def _get_existing_urls_with_archive(urls: List[str]) -> set:
+    """
+    Проверить URL и в articles, и в articles_archive.
+
+    Предотвращает повторный парсинг ранее архивированных статей.
+    """
+    import psycopg2
+    try:
+        conn = psycopg2.connect(get_db_connection_string())
+        cur = conn.cursor()
+
+        # Из основной таблицы
+        cur.execute("SELECT url FROM articles WHERE url = ANY(%s)", (urls,))
+        existing = {row[0] for row in cur.fetchall()}
+
+        # Из архива
+        try:
+            cur.execute("SELECT url FROM articles_archive WHERE url = ANY(%s)", (urls,))
+            existing.update(row[0] for row in cur.fetchall())
+        except Exception:
+            conn.rollback()  # таблица может не существовать
+
+        cur.close()
+        conn.close()
+        return existing
+    except Exception as e:
+        logger.warning(f"Ошибка проверки дубликатов: {e}")
+        return set()
+
+
+async def parse_habr_feed(limit: int = 50, hubs: Optional[List[str]] = None) -> List[str]:
+    """
+    Спарсить URL статей из ленты Habr.
+
+    Returns:
+        Список URL статей
+    """
+    if hubs:
+        feed_url = f"{HABR_BASE_URL}/ru/flows/develop/articles/"
+    else:
+        feed_url = f"{HABR_BASE_URL}/ru/articles/"
+
+    try:
+        async with aiohttp.ClientSession(headers=HABR_HEADERS) as session:
+            async with session.get(feed_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                if response.status != 200:
+                    logger.error(f"Feed HTTP {response.status}")
+                    return []
+                html = await response.text()
+
+        soup = BeautifulSoup(html, 'html.parser')
+        cards = soup.find_all('article', class_='tm-articles-list__item', limit=limit * 2)
+
+        urls = []
+        for card in cards:
+            if len(urls) >= limit:
+                break
+            title_elem = card.find('h2', class_='tm-title')
+            if not title_elem:
+                continue
+            link = title_elem.find('a')
+            if not link:
+                continue
+            urls.append(HABR_BASE_URL + link['href'])
+
+        return urls
+
+    except Exception as e:
+        logger.error(f"Ошибка парсинга ленты: {e}")
+        return []
+
+
+async def run_habr_feed(limit: int = 50, hubs: str = "", verbose: bool = False):
+    """
+    Standalone парсинг ленты Habr + psycopg2 сохранение.
+
+    Для GitHub Actions: не требует asyncpg, Docker, src.*.
+    Проверяет дубликаты и в articles, и в articles_archive.
+    """
+    hubs_list = [h.strip() for h in hubs.split(',')] if hubs else []
+
+    print(f"\n{'=' * 60}")
+    print(f"🚀 HABR SCRAPER v4.3 (standalone feed)")
+    print(f"{'=' * 60}")
+    print(f"  Режим:        лента (standalone, psycopg2)")
+    print(f"  Лимит:        {limit}")
+    print(f"  Хабы:         {hubs if hubs else 'все'}")
+    print(f"{'=' * 60}\n")
+
+    # Шаг 1: Получить URL из ленты
+    print("  Загрузка ленты Habr...")
+    feed_urls = await parse_habr_feed(limit=limit * 2, hubs=hubs_list)
+    print(f"  Найдено ссылок: {len(feed_urls)}")
+
+    if not feed_urls:
+        print("  Нет статей в ленте")
+        return
+
+    # Шаг 2: Проверить дубликаты (articles + archive)
+    existing = _get_existing_urls_with_archive(feed_urls)
+    new_urls = [u for u in feed_urls if u not in existing][:limit]
+    print(f"  Уже в БД/архиве: {len(existing)}")
+    print(f"  Новых для парсинга: {len(new_urls)}")
+
+    if not new_urls:
+        print("\n  Нет новых статей")
+        print(f"{'=' * 60}\n")
+        return
+
+    # Шаг 3: Парсинг каждой статьи
+    parsed = []
+    for i, url in enumerate(new_urls, 1):
+        print(f"  [{i}/{len(new_urls)}] {url[:65]}...")
+        article = await parse_habr_article(url)
+        if article:
+            parsed.append(article)
+            if verbose:
+                print(f"    ✓ {article['title'][:55]} ({len(article['content'])} chars)")
+        else:
+            print(f"    ✗ Не удалось")
+        # Пауза чтобы не нагружать Habr
+        await asyncio.sleep(1.0)
+
+    # Шаг 4: Сохранение
+    stats = {'scraped': len(parsed), 'saved': 0, 'duplicates': 0, 'errors': 0}
+    if parsed:
+        print(f"\n  Сохранение в БД ({len(parsed)} статей)...")
+        db_stats = save_articles_to_db_sync(parsed)
+        stats.update(db_stats)
+
+    # Результаты
+    print(f"\n{'=' * 60}")
+    print(f"✅ РЕЗУЛЬТАТЫ")
+    print(f"{'=' * 60}")
+    print(f"  В ленте:     {len(feed_urls)}")
+    print(f"  Новых:       {len(new_urls)}")
+    print(f"  Спарсено:    {stats['scraped']}")
+    print(f"  Сохранено:   {stats['saved']}")
+    print(f"  Дубликатов:  {stats['duplicates']}")
+    print(f"  Ошибок:      {stats['errors']}")
+    print(f"{'=' * 60}")
+
+    if stats['saved'] > 0:
+        print(f"\n💡 Для AI обработки:")
+        print(f"   python process_existing_articles.py --limit {stats['saved']} --provider ollama")
+
+    print()
+    return stats
+
+
+# =========================================================================
 # CLI
 # =========================================================================
 
@@ -416,37 +582,44 @@ def parse_urls(raw_urls: List[str]) -> List[str]:
 
 
 if __name__ == '__main__':
+    import logging as _logging
+    logger = _logging.getLogger(__name__)
+
     parser = argparse.ArgumentParser(
-        description='Habr парсер v4.2',
+        description='Habr парсер v4.3',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
+Режимы:
+  По умолчанию      src.scrapers + async DB (Docker, asyncpg)
+  --url              конкретные статьи (standalone, psycopg2)
+  --feed             лента Habr (standalone, psycopg2, GitHub Actions)
+
 Примеры:
-  # Собрать 50 статей из ленты (требует asyncpg + PostgreSQL)
+  # Массовый сбор в Docker
   python %(prog)s 50
 
-  # Спарсить конкретную статью (работает без asyncpg!)
+  # Standalone: конкретная статья
   python %(prog)s --url https://habr.com/ru/articles/123456/
 
-  # Несколько статей
-  python %(prog)s --url https://habr.com/ru/articles/111/,https://habr.com/ru/articles/222/
+  # Standalone: лента (для GitHub Actions)
+  python %(prog)s --feed 50
 
-  # Повтор --url
-  python %(prog)s --url https://habr.com/ru/articles/111/ --url https://habr.com/ru/articles/222/
+  # Лента с фильтром по хабам
+  python %(prog)s --feed 50 --hubs "python,devops"
 
-  # Только парсинг, без сохранения в БД
+  # Только парсинг, без БД
   python %(prog)s --url https://habr.com/ru/articles/123456/ --no-save
-
-Для AI обработки:
-  python run_full_pipeline.py --url https://habr.com/ru/articles/123456/
         """
     )
 
     parser.add_argument('limit', type=int, nargs='?', default=10,
-                        help='Количество статей (default: 10). Игнорируется при --url')
-    parser.add_argument('hubs', type=str, nargs='?', default="",
-                        help='Хабы через запятую. Игнорируется при --url')
+                        help='Количество статей (default: 10)')
     parser.add_argument('--url', '-u', action='append', default=None,
-                        help='URL статьи (можно указать несколько раз или через запятую)')
+                        help='URL статьи (можно несколько раз или через запятую)')
+    parser.add_argument('--feed', type=int, metavar='LIMIT', default=None,
+                        help='Standalone парсинг ленты (для GitHub Actions)')
+    parser.add_argument('--hubs', type=str, default="",
+                        help='Хабы через запятую (для --feed)')
     parser.add_argument('--no-save', action='store_true', default=False,
                         help='Только парсинг, без сохранения в БД')
     parser.add_argument('--verbose', '-v', action='store_true',
@@ -456,18 +629,21 @@ if __name__ == '__main__':
 
     try:
         if args.url:
-            # --url режим: standalone парсер + psycopg2 (без asyncpg)
+            # --url: standalone + psycopg2
             urls = parse_urls(args.url)
             if not urls:
                 print("❌ Не указаны URL")
                 sys.exit(1)
             asyncio.run(run_habr_scraper_by_urls(
-                urls=urls,
-                verbose=args.verbose,
-                save=not args.no_save
+                urls=urls, verbose=args.verbose, save=not args.no_save
+            ))
+        elif args.feed is not None:
+            # --feed: standalone лента + psycopg2 (GitHub Actions)
+            asyncio.run(run_habr_feed(
+                limit=args.feed, hubs=args.hubs, verbose=args.verbose
             ))
         else:
-            # Массовый режим: src.scrapers + async DB (asyncpg)
+            # Default: src.scrapers + async DB (Docker)
             asyncio.run(run_habr_scraper(args.limit, args.hubs, args.verbose))
     except KeyboardInterrupt:
         print("\n⚠️  Прервано")
