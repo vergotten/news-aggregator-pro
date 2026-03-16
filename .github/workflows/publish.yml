@@ -1,7 +1,7 @@
 # .github/workflows/publish.yml
 # Ежедневная публикация обработанных статей
 #
-# 1. Берёт из Supabase статьи status=processed + score >= 7
+# 1. Берёт из Supabase статьи status=processed + score >= 5
 # 2. Публикует в Telegraph
 # 3. Отправляет в Telegram
 # 4. Генерирует RSS feed
@@ -19,7 +19,7 @@ on:
       min_score:
         description: 'Минимальный score для публикации'
         required: false
-        default: '7'
+        default: '5'
       limit:
         description: 'Макс. количество публикаций'
         required: false
@@ -62,7 +62,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python publish_pending.py \
-            --min-score ${{ github.event.inputs.min_score || '7' }} \
+            --min-score ${{ github.event.inputs.min_score || '5' }} \
             --limit ${{ github.event.inputs.limit || '10' }} \
             ${{ github.event.inputs.no_telegram == 'true' && '--no-telegram' || '' }} \
             ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '' }} \

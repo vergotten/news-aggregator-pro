@@ -313,7 +313,7 @@ async def process_existing_articles(
         qdrant = QdrantService()
         logger.info("✓ QdrantService")
     except Exception as e:
-        logger.warning(f"Qdrant недоступен: {e}")
+        logger.info(f"ⓘ Qdrant недоступен (нормально вне Docker)")
 
     # --- Загрузка статей ---
     print(fmt_header("ЗАГРУЗКА СТАТЕЙ"))
@@ -408,8 +408,6 @@ async def process_existing_articles(
             ai_start = time.time()
             processed = orchestrator.process_article(
                 article,
-                normalize_style=True,
-                validate_quality=True,
                 verbose=debug,
                 min_relevance=min_relevance
             )
@@ -590,10 +588,23 @@ if __name__ == '__main__':
                         choices=['cost_optimized', 'balanced', 'quality_focused', 'speed_focused'],
                         help='Стратегия выбора моделей')
 
+    # Подключение
+    parser.add_argument('--db', help='DATABASE_URL (Supabase pooler URL)')
+    parser.add_argument('--verbose', '-v', action='store_true',
+                        help='Подробный вывод')
+
     parser.add_argument('--debug', action='store_true',
                         help='Debug режим')
 
     args = parser.parse_args()
+
+    # --db перезаписывает DATABASE_URL
+    if args.db:
+        os.environ["DATABASE_URL"] = args.db
+
+    # --verbose = --debug
+    if args.verbose:
+        args.debug = True
 
     # Нормализация
     urls = parse_urls(args.url) if args.url else None
@@ -621,3 +632,23 @@ if __name__ == '__main__':
 
         traceback.print_exc()
         sys.exit(1)
+
+# =================================================================
+# Примеры:
+# =================================================================
+#
+# Обработать 2 статьи из Supabase через Ollama:
+# python process_existing_articles.py --db "postgresql://postgres.xxx:PASS@aws-1-eu-west-1.pooler.supabase.com:6543/postgres" -p ollama --limit 2
+#
+# Или через env:
+# DATABASE_URL="postgresql://..." python process_existing_articles.py -p ollama --limit 3
+#
+# Через Docker (локальная БД):
+# docker compose exec api python process_existing_articles.py -p ollama --limit 5
+#
+# Конкретная статья:
+# python process_existing_articles.py --db "..." -p ollama --url https://habr.com/ru/articles/1006098/
+#
+# Переобработать всё:
+# python process_existing_articles.py --db "..." -p ollama --reprocess-all --limit 10
+# =================================================================
