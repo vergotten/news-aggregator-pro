@@ -5,7 +5,21 @@
     <description>Curated tech news from Habr and more</description>
     <link>https://github.com</link>
     <language>ru</language>
-    <lastBuildDate>Sun, 15 Mar 2026 09:39:55 +0000</lastBuildDate>
+    <lastBuildDate>Mon, 16 Mar 2026 09:25:12 +0000</lastBuildDate>
     <generator>news-aggregator-pro/generate_rss.py</generator>
+    <item>
+      <title>5 симптомов скорой смерти таск-трекера в команде разработки</title>
+      <link>https://telegra.ph/5-simptomov-skoroj-smerti-task-trekera-v-komande-razrabotki-03-16</link>
+      <guid isPermaLink="false">e2abd6a6-2f81-44f7-b7f3-a15837336eb0</guid>
+      <description>Привет, Хабр!
+Меня зовут Артем Герасимов, я владелец продукта
+SimpleOne SDLC. В ИТ-индустрии из года в год можно наблюдать одну и ту же картину: разработка выглядит управляемой, задачи двигаются по доске и закрываются.</description>
+      <pubDate>Wed, 11 Mar 2026 07:51:34 +0000</pubDate>
+      <category>Блог компании SimpleOne</category>
+      <category>Управление разработкой</category>
+      <category>Управление продуктом</category>
+      <category>Управление проектами</category>
+      <category>Управление персоналом</category>
+    </item>
   </channel>
 </rss>
