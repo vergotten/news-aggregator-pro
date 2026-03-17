@@ -5,8 +5,20 @@
     <description>Curated tech news from Habr and more</description>
     <link>https://github.com</link>
     <language>ru</language>
-    <lastBuildDate>Tue, 17 Mar 2026 06:09:01 +0000</lastBuildDate>
+    <lastBuildDate>Tue, 17 Mar 2026 07:15:05 +0000</lastBuildDate>
     <generator>news-aggregator-pro/generate_rss.py</generator>
+    <item>
+      <title>5 признаков надвигающегося краха таск-трекера в разработке команды</title>
+      <link>https://telegra.ph/5-priznakov-nadvigayushchegosya-kraha-task-trekera-v-razrabotke-komandy-03-17</link>
+      <guid isPermaLink="false">e2abd6a6-2f81-44f7-b7f3-a15837336eb0</guid>
+      <description>Разработка кажется управляемой, но при детальном рассмотрении выявляются проблемы с отслеживанием реального цикла разработки. Релизы становятся черными ящиками из-за разрозненных источников информации.</description>
+      <pubDate>Wed, 11 Mar 2026 07:51:34 +0000</pubDate>
+      <category>Блог компании SimpleOne</category>
+      <category>Управление разработкой</category>
+      <category>Управление продуктом</category>
+      <category>Управление проектами</category>
+      <category>Управление персоналом</category>
+    </item>
     <item>
       <title>22 протокола мониторинга в PingZen: от пинга до сценариев Playwright</title>
       <link>https://telegra.ph/22-protokola-monitoringa-v-PingZen-ot-pinga-do-scenariev-Playwright-03-17</link>
