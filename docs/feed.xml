@@ -5,21 +5,54 @@
     <description>Curated tech news from Habr and more</description>
     <link>https://github.com</link>
     <language>ru</language>
-    <lastBuildDate>Mon, 16 Mar 2026 10:09:22 +0000</lastBuildDate>
+    <lastBuildDate>Tue, 17 Mar 2026 06:09:01 +0000</lastBuildDate>
     <generator>news-aggregator-pro/generate_rss.py</generator>
     <item>
-      <title>5 симптомов скорой смерти таск-трекера в команде разработки</title>
-      <link>https://telegra.ph/5-simptomov-skoroj-smerti-task-trekera-v-komande-razrabotki-03-16</link>
-      <guid isPermaLink="false">e2abd6a6-2f81-44f7-b7f3-a15837336eb0</guid>
-      <description>Привет, Хабр!
-Меня зовут Артем Герасимов, я владелец продукта
-SimpleOne SDLC. В ИТ-индустрии из года в год можно наблюдать одну и ту же картину: разработка выглядит управляемой, задачи двигаются по доске и закрываются.</description>
-      <pubDate>Wed, 11 Mar 2026 07:51:34 +0000</pubDate>
-      <category>Блог компании SimpleOne</category>
-      <category>Управление разработкой</category>
-      <category>Управление продуктом</category>
-      <category>Управление проектами</category>
-      <category>Управление персоналом</category>
+      <title>22 протокола мониторинга в PingZen: от пинга до сценариев Playwright</title>
+      <link>https://telegra.ph/22-protokola-monitoringa-v-PingZen-ot-pinga-do-scenariev-Playwright-03-17</link>
+      <guid isPermaLink="false">4cde7a98-7026-4df2-ae5e-502fe510d18c</guid>
+      <description>PingZen поддерживает 22 протокола мониторинга, включая HTTP, TCP, UDP и ICMP. Особое внимание уделено эмуляции пользовательских действий с помощью Playwright.</description>
+      <pubDate>Sun, 15 Mar 2026 07:00:46 +0000</pubDate>
+      <category>DevOps</category>
+      <category>Системное администрирование</category>
+      <category>Python</category>
+      <category>Kubernetes</category>
+    </item>
+    <item>
+      <title>Процессирование событий в UE5: сериализуемые вызовы функций для оптимизации производительности</title>
+      <link>https://telegra.ph/Processirovanie-sobytij-v-UE5-serializuemye-vyzovy-funkcij-dlya-optimizacii-proizvoditelnosti-03-17</link>
+      <guid isPermaLink="false">d6110f99-fc8d-4410-8bd8-f8dddb364c7b</guid>
+      <description>Разработчик UE5 создает плагин FunctionHandler для сериализуемых вызовов функций в рантайме. Плагин позволяет конфигурировать вызовы без хардкода и десятков оберток.</description>
+      <pubDate>Sun, 15 Mar 2026 07:00:46 +0000</pubDate>
+      <category>C++</category>
+      <category>Программирование</category>
+      <category>Разработка игр</category>
+      <category>Open source</category>
+      <category>Unreal Engine</category>
+    </item>
+    <item>
+      <title>Запуск LLM на AMD RX580: проблемы ROCm, Ollama и GPU инференс</title>
+      <link>https://telegra.ph/Zapusk-LLM-na-AMD-RX580-problemy-ROCm-Ollama-i-GPU-inferens-03-16</link>
+      <guid isPermaLink="false">4ea1dab6-d50f-49e6-a17c-6e553c4d0d17</guid>
+      <description>Успешно запущено LLM inference на старой AMD RX580 с помощью ROCm. Решение включило обновление ядра до версии 6.8 и использование llama.cpp с ROCm.</description>
+      <pubDate>Sun, 15 Mar 2026 06:15:38 +0000</pubDate>
+      <category>GPGPU</category>
+      <category>Старое железо</category>
+      <category>Программирование</category>
+      <category>Отладка</category>
+      <category>Искусственный интеллект</category>
+    </item>
+    <item>
+      <title>Китай опередил Neuralink: мировой первый коммерческий нейроимплант</title>
+      <link>https://telegra.ph/Kitaj-operedil-Neuralink-mirovoj-pervyj-kommercheskij-nejroimplant-03-16</link>
+      <guid isPermaLink="false">d2f8f2de-ead8-4a9a-81b6-9a04c91e459a</guid>
+      <description>Китай получил первую лицензию на коммерческое использование нейроинтерфейса NEO, позволяющего парализованным пациентам управлять роботизированной перчаткой. Устройство прошло успешные клинические испытания и готово к массовому внедрению.</description>
+      <pubDate>Sun, 15 Mar 2026 06:01:24 +0000</pubDate>
+      <category>Научно-популярное</category>
+      <category>Искусственный интеллект</category>
+      <category>Биотехнологии</category>
+      <category>Компьютерное железо</category>
+      <category>Машинное обучение</category>
     </item>
   </channel>
 </rss>
