@@ -11,8 +11,9 @@ name: Publish & RSS
 
 on:
   schedule:
-    # Каждый день в 09:00 UTC (12:00 MSK)
-    - cron: '0 9 * * *'
+    - cron: '0 6 * * *'   # 09:00 MSK
+    - cron: '0 12 * * *'  # 15:00 MSK
+    - cron: '0 16 * * *'  # 19:00 MSK
 
   workflow_dispatch:
     inputs:
@@ -63,7 +64,7 @@ jobs:
         run: |
           python publish_pending.py \
             --min-score ${{ github.event.inputs.min_score || '5' }} \
-            --limit ${{ github.event.inputs.limit || '10' }} \
+            --limit ${{ github.event.inputs.limit || '1' }} \
             ${{ github.event.inputs.no_telegram == 'true' && '--no-telegram' || '' }} \
             ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '' }} \
             --verbose

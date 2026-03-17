@@ -1,0 +1,83 @@
+{
+  "fetched_at": "2026-01-31T14:48:29.396283",
+  "ttl_minutes": 60,
+  "models": [
+    {
+      "id": "meta-llama/llama-3.2-3b-instruct:free",
+      "name": "Llama 3.2 3B Instruct (free)",
+      "description": "",
+      "prompt_price": 0.0,
+      "completion_price": 0.0,
+      "context_length": 131072,
+      "max_completion_tokens": 4096,
+      "is_free": true,
+      "capabilities": [
+        "chat"
+      ],
+      "architecture": null,
+      "top_provider": null
+    },
+    {
+      "id": "meta-llama/llama-3.1-8b-instruct:free",
+      "name": "Llama 3.1 8B Instruct (free)",
+      "description": "",
+      "prompt_price": 0.0,
+      "completion_price": 0.0,
+      "context_length": 131072,
+      "max_completion_tokens": 4096,
+      "is_free": true,
+      "capabilities": [
+        "chat"
+      ],
+      "architecture": null,
+      "top_provider": null
+    },
+    {
+      "id": "google/gemini-2.0-flash-exp:free",
+      "name": "Gemini 2.0 Flash Exp (free)",
+      "description": "",
+      "prompt_price": 0.0,
+      "completion_price": 0.0,
+      "context_length": 1048576,
+      "max_completion_tokens": 4096,
+      "is_free": true,
+      "capabilities": [
+        "chat",
+        "vision"
+      ],
+      "architecture": null,
+      "top_provider": null
+    },
+    {
+      "id": "mistralai/mistral-small-3.1-24b-instruct:free",
+      "name": "Mistral Small 3.1 24B (free)",
+      "description": "",
+      "prompt_price": 0.0,
+      "completion_price": 0.0,
+      "context_length": 131072,
+      "max_completion_tokens": 4096,
+      "is_free": true,
+      "capabilities": [
+        "chat",
+        "function_calling"
+      ],
+      "architecture": null,
+      "top_provider": null
+    },
+    {
+      "id": "qwen/qwen2.5-72b-instruct:free",
+      "name": "Qwen 2.5 72B Instruct (free)",
+      "description": "",
+      "prompt_price": 0.0,
+      "completion_price": 0.0,
+      "context_length": 131072,
+      "max_completion_tokens": 4096,
+      "is_free": true,
+      "capabilities": [
+        "chat"
+      ],
+      "architecture": null,
+      "top_provider": null
+    }
+  ]
+}
