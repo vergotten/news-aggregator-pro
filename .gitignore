@@ -103,3 +103,5 @@ scripts
 commit_split.sh
 changes.diff
 git_push.shcache/
+cache/
+git_push.sh
