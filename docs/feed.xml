@@ -5,8 +5,18 @@
     <description>Curated tech news from Habr and more</description>
     <link>https://github.com</link>
     <language>ru</language>
-    <lastBuildDate>Wed, 18 Mar 2026 16:48:55 +0000</lastBuildDate>
+    <lastBuildDate>Thu, 19 Mar 2026 07:08:19 +0000</lastBuildDate>
     <generator>news-aggregator-pro/generate_rss.py</generator>
+    <item>
+      <title>Капсульный фреймворк: упаковка архитектуры в ДНК проектов</title>
+      <link>https://telegra.ph/Kapsulnyj-frejmvork-upakovka-arhitektury-v-DNK-proektov-03-19</link>
+      <guid isPermaLink="false">a2ae9fa0-9198-4191-90e0-4a9b02651634</guid>
+      <description>Разработчики создали капсульный фреймворк для микросервисов, который стал основой для всех проектов. Описаны шаги по упаковке архитектуры в ДНК проектов.</description>
+      <pubDate>Tue, 17 Mar 2026 07:38:59 +0000</pubDate>
+      <category>Node.JS</category>
+      <category>Анализ и проектирование систем</category>
+      <category>TypeScript</category>
+    </item>
     <item>
       <title>Социальная инженерия в цифровизации: опыт автоматизатора</title>
       <link>https://telegra.ph/Socialnaya-inzheneriya-v-cifrovizacii-opyt-avtomatizatora-03-18-4</link>
