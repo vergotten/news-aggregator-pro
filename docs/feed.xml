@@ -5,8 +5,20 @@
     <description>Curated tech news from Habr and more</description>
     <link>https://github.com</link>
     <language>ru</language>
-    <lastBuildDate>Thu, 19 Mar 2026 13:23:29 +0000</lastBuildDate>
+    <lastBuildDate>Thu, 19 Mar 2026 16:45:04 +0000</lastBuildDate>
     <generator>news-aggregator-pro/generate_rss.py</generator>
+    <item>
+      <title>Математик 20 лет создавал неразрешимую задачу, но GPT-5.4 нарушил его концепцию мира</title>
+      <link>https://telegra.ph/Matematik-20-let-sozdaval-nerazreshimuyu-zadachu-no-GPT-54-narushil-ego-koncepciyu-mira-03-19</link>
+      <guid isPermaLink="false">943fcaf1-d5d9-4031-b5cf-bfadcde83cc9</guid>
+      <description>Польский математик создал задачу, которую считал нерешаемой для ИИ. Однако GPT-5.4 справился с ней, что вызвало сильную реакцию у исследователя.</description>
+      <pubDate>Thu, 19 Mar 2026 07:25:08 +0000</pubDate>
+      <category>Блог компании BotHub</category>
+      <category>Искусственный интеллект</category>
+      <category>Машинное обучение</category>
+      <category>Научно-популярное</category>
+      <category>Будущее здесь</category>
+    </item>
     <item>
       <title>Эволюция логирования в Lenta tech: переход от Loki к Victoria Logs</title>
       <link>https://telegra.ph/EHvolyuciya-logirovaniya-v-Lenta-tech-perehod-ot-Loki-k-Victoria-Logs-03-19</link>
