@@ -292,15 +292,21 @@ class TelegraphPublisher:
         """
         Парсит текст (без code blocks) на блоки.
 
-        Распознаёт: заголовки, списки, цитаты, параграфы.
+        Распознаёт: код, заголовки, списки, цитаты, параграфы.
+        Улучшенное распознавание для plain text (без markdown маркеров).
         """
         blocks = []
+        # Гарантируем что ### заголовки отделены двойным переносом
+        text = re.sub(r'\n(#{1,4}\s)', r'\n\n\1', text)
+        text = re.sub(r'(#{1,4}\s.+)\n([^#\n])', r'\1\n\n\2', text)
         paragraphs = text.split("\n\n")
 
         for para in paragraphs:
             para = para.strip()
             if not para:
                 continue
+
+            lines = para.split("\n")
 
             # Markdown заголовок: ## Title
             heading_match = re.match(r'^(#{1,4})\s+(.+)$', para, re.MULTILINE)
@@ -310,8 +316,12 @@ class TelegraphPublisher:
                 blocks.append(("heading", (level, heading_text)))
                 continue
 
-            # Маркированный список
-            lines = para.split("\n")
+            # Распознавание кода по содержимому (без ``` маркеров)
+            if self._looks_like_code(para, lines):
+                blocks.append(("code", ("", para)))
+                continue
+
+            # Маркированный список (-, *, •)
             list_pattern = re.compile(r'^\s*[-*•]\s+(.+)$')
             if all(list_pattern.match(line) for line in lines if line.strip()):
                 items = []
@@ -323,7 +333,7 @@ class TelegraphPublisher:
                     blocks.append(("list", items))
                     continue
 
-            # Нумерованный список
+            # Нумерованный список (1. или 1))
             num_pattern = re.compile(r'^\s*\d+[.)]\s+(.+)$')
             if all(num_pattern.match(line) for line in lines if line.strip()):
                 items = []
@@ -341,7 +351,7 @@ class TelegraphPublisher:
                 blocks.append(("quote", quote_text.strip()))
                 continue
 
-            # Inline code block (отступ 4+ пробела)
+            # Inline code block (отступ 4+ пробела на каждой строке)
             if all(line.startswith("    ") or not line.strip() for line in lines):
                 code = "\n".join(
                     line[4:] if line.startswith("    ") else line
@@ -350,10 +360,9 @@ class TelegraphPublisher:
                 blocks.append(("code", ("", code.strip())))
                 continue
 
-            # Короткая строка без финальной пунктуации → подзаголовок
-            if (len(para) < 80
-                    and "\n" not in para
-                    and not para.endswith((".", ":", "!", "?", ","))):
+            # Подзаголовок: короткая строка, без переносов
+            # Включает строки с : и ) на конце (напр. "Группа 1: Транспортные протоколы")
+            if self._looks_like_heading(para):
                 clean = re.sub(r'\*\*(.+?)\*\*', r'\1', para)
                 blocks.append(("heading", (3, clean)))
                 continue
@@ -362,6 +371,86 @@ class TelegraphPublisher:
             blocks.append(("paragraph", para))
 
         return blocks
+
+    @staticmethod
+    def _looks_like_code(para: str, lines: List[str]) -> bool:
+        """
+        Эвристика: похож ли абзац на блок кода?
+
+        Признаки кода:
+        - Строки с отступами (2+ пробела) в начале
+        - Ключевые слова: class, def, import, return, if, for, async, await
+        - Синтаксис: =, (), {}, ->, ::, #комментарии
+        - Имена файлов с расширением .py, .js, .ts и т.д.
+        """
+        if len(lines) < 2:
+            return False
+
+        # Считаем признаки кода
+        code_indicators = 0
+        total_lines = len([l for l in lines if l.strip()])
+
+        if total_lines < 2:
+            return False
+
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+
+            # Отступы (не считая первую строку)
+            if line.startswith("  ") or line.startswith("\t"):
+                code_indicators += 1
+
+            # Ключевые слова Python/JS/C
+            if re.match(r'^(class |def |import |from |return |if |for |while |async |await |try:|except |elif |else:|with |raise |yield )', stripped):
+                code_indicators += 2
+
+            # Комментарий в начале строки
+            if re.match(r'^#\s*\w+', stripped) and not re.match(r'^#{1,4}\s+\w', stripped):
+                code_indicators += 1
+
+            # Паттерны кода: присваивание, вызовы функций, декораторы
+            if re.search(r'[a-zA-Z_]\w*\s*[=]\s*', stripped):
+                code_indicators += 0.5
+            if re.search(r'@\w+', stripped):
+                code_indicators += 2
+            if re.search(r'\.\.\.$', stripped):
+                code_indicators += 1
+            if re.search(r'^\s*(pass|\.\.\.)\s*$', stripped):
+                code_indicators += 2
+
+            # Имя файла как комментарий: # filename.py
+            if re.match(r'^#\s*\w+\.\w{1,4}$', stripped):
+                code_indicators += 2
+
+        # Если больше 40% строк похожи на код
+        ratio = code_indicators / total_lines
+        return ratio >= 1.0
+
+    @staticmethod
+    def _looks_like_heading(para: str) -> bool:
+        """
+        Эвристика: похож ли абзац на заголовок?
+
+        Признаки:
+        - Короткая строка (< 100 символов)
+        - Одна строка (без переносов)
+        - Начинается с заглавной буквы или цифры
+        - Может заканчиваться на : или ) (напр. "Группа 1: Транспортные протоколы (ICMP, TCP, UDP)")
+        - НЕ заканчивается на . (это предложение, не заголовок)
+        """
+        if "\n" in para:
+            return False
+        if len(para) > 100 or len(para) < 3:
+            return False
+        # Не заканчивается на точку или запятую (это обычное предложение)
+        if para.endswith((".", ",")):
+            return False
+        # Слишком много слов — скорее абзац
+        if len(para.split()) > 12:
+            return False
+        return True
 
 
 # =============================================================================

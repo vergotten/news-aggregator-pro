@@ -86,6 +86,7 @@ def get_pending_articles(min_score: int = 7, limit: int = 20) -> List[Dict]:
         SELECT id, title, url, content,
                editorial_title, editorial_teaser, editorial_rewritten,
                telegram_post_text, telegram_cover_image,
+               telegraph_content_html,
                tags, hubs, images,
                relevance_score, author, source
         FROM articles
@@ -160,29 +161,165 @@ def telegraph_publish(title: str, content: str, images: List[str] = None,
         URL страницы или None
     """
     token = telegraph_ensure_account()
-    nodes = content_to_telegraph_nodes(content, images)
 
-    resp = requests.post(f"{TELEGRAPH_API}/createPage", data={
-        "access_token": token,
-        "title": title[:256],
-        "author_name": author or os.getenv("TELEGRAPH_AUTHOR", "News Aggregator"),
-        "content": json.dumps(nodes, ensure_ascii=False),
-        "return_content": "false",
-    })
-    resp.raise_for_status()
-    result = resp.json()
+    # Telegraph лимит ~64KB на JSON. Обрезаем контент если слишком большой.
+    MAX_CONTENT_CHARS = 40000  # ~40K символов → ~50KB JSON с nodes
+    if len(content) > MAX_CONTENT_CHARS:
+        # Обрезаем по последнему абзацу
+        truncated = content[:MAX_CONTENT_CHARS]
+        last_para = truncated.rfind("\n\n")
+        if last_para > MAX_CONTENT_CHARS * 0.7:
+            content = truncated[:last_para] + "\n\n[Текст сокращён]"
+        else:
+            content = truncated + "\n\n[Текст сокращён]"
+        logger.warning(f"Telegraph: контент обрезан до {len(content)} chars")
 
-    if result.get("ok"):
-        url = result["result"].get("url")
-        logger.info(f"Telegraph: {url}")
-        return url
-    else:
-        logger.error(f"Telegraph error: {result.get('error', 'unknown')}")
-        return None
+    # Используем TelegraphPublisher v3.1 (правильный парсинг markdown, bold, заголовков)
+    try:
+        from src.infrastructure.telegram.telegraph_publisher import TelegraphPublisher
+        pub = TelegraphPublisher()
+        result = pub.create_page(
+            title=title,
+            content=content,
+            images=images or [],
+            author_name=author or os.getenv("TELEGRAPH_AUTHOR", "News Aggregator"),
+        )
+        if result.success:
+            logger.info(f"Telegraph: {result.url}")
+            return result.url
+        else:
+            logger.error(f"Telegraph error: {result.error}")
+            return None
+    except ImportError:
+        logger.warning("TelegraphPublisher не доступен, используем fallback")
+        nodes = content_to_telegraph_nodes(content, images)
+        content_json = json.dumps(nodes, ensure_ascii=False)
+        resp = requests.post(f"{TELEGRAPH_API}/createPage", data={
+            "access_token": token,
+            "title": title[:256],
+            "author_name": author or os.getenv("TELEGRAPH_AUTHOR", "News Aggregator"),
+            "content": content_json,
+            "return_content": "false",
+        })
+        resp.raise_for_status()
+        result = resp.json()
+        if result.get("ok"):
+            return result["result"].get("url")
+        else:
+            logger.error(f"Telegraph error: {result.get('error', 'unknown')}")
+            return None
 
 
 def content_to_telegraph_nodes(content: str, images: List[str] = None) -> List[Dict]:
-    """Конвертировать текст в Telegraph JSON nodes."""
+    """
+    Конвертировать текст в Telegraph JSON nodes.
+
+    Использует TelegraphPublisher v3.1 с распознаванием:
+    - Markdown: ```код```, ## заголовки, - списки
+    - Эвристики: _looks_like_code(), _looks_like_heading()
+    - Inline форматирование: **bold**, *italic*, `code`
+    """
+    try:
+        from src.infrastructure.telegram.telegraph_publisher import TelegraphPublisher
+        pub = TelegraphPublisher.__new__(TelegraphPublisher)
+        # Вызываем внутренний метод парсинга
+        blocks = pub._split_into_blocks(content or "")
+        nodes = []
+
+        images = images or []
+        remaining = list(images)
+
+        # Обложка
+        if remaining:
+            nodes.append({"tag": "figure", "children": [
+                {"tag": "img", "attrs": {"src": remaining.pop(0)}}
+            ]})
+
+        img_every = 3
+        para_count = 0
+
+        for block_type, block_data in blocks:
+            if block_type == "heading":
+                level, text = block_data
+                tag = "h3" if level <= 2 else "h4"
+                nodes.append({"tag": tag, "children": [text]})
+
+            elif block_type == "code":
+                lang, code = block_data if isinstance(block_data, tuple) else ("", block_data)
+                nodes.append({"tag": "pre", "children": [
+                    {"tag": "code", "children": [code]}
+                ]})
+
+            elif block_type == "list":
+                items = block_data
+                li_nodes = [{"tag": "li", "children": [item]} for item in items]
+                nodes.append({"tag": "ul", "children": li_nodes})
+
+            elif block_type == "quote":
+                nodes.append({"tag": "blockquote", "children": [block_data]})
+
+            else:  # paragraph
+                # Inline форматирование
+                children = _parse_inline_formatting(block_data)
+                nodes.append({"tag": "p", "children": children})
+
+            para_count += 1
+
+            # Вставляем картинку каждые N абзацев
+            if remaining and para_count % img_every == 0:
+                nodes.append({"tag": "figure", "children": [
+                    {"tag": "img", "attrs": {"src": remaining.pop(0)}}
+                ]})
+
+        # Оставшиеся картинки
+        if remaining:
+            nodes.append({"tag": "hr"})
+            for img in remaining[:5]:
+                nodes.append({"tag": "figure", "children": [
+                    {"tag": "img", "attrs": {"src": img}}
+                ]})
+
+        return nodes if nodes else [{"tag": "p", "children": ["Контент отсутствует"]}]
+
+    except ImportError:
+        # Fallback если TelegraphPublisher не доступен (GitHub Actions)
+        return _simple_content_to_nodes(content, images)
+
+
+def _parse_inline_formatting(text: str) -> list:
+    """Парсит inline markdown: **bold**, *italic*, `code`."""
+    import re
+    parts = []
+    last_end = 0
+
+    # Паттерн: **bold**, `code`, *italic*
+    pattern = re.compile(r'(\*\*(.+?)\*\*|`(.+?)`|\*(.+?)\*)')
+
+    for match in pattern.finditer(text):
+        # Текст до матча
+        before = text[last_end:match.start()]
+        if before:
+            parts.append(before)
+
+        if match.group(2):  # **bold**
+            parts.append({"tag": "strong", "children": [match.group(2)]})
+        elif match.group(3):  # `code`
+            parts.append({"tag": "code", "children": [match.group(3)]})
+        elif match.group(4):  # *italic*
+            parts.append({"tag": "em", "children": [match.group(4)]})
+
+        last_end = match.end()
+
+    # Остаток
+    remaining = text[last_end:]
+    if remaining:
+        parts.append(remaining)
+
+    return parts if parts else [text]
+
+
+def _simple_content_to_nodes(content: str, images: List[str] = None) -> List[Dict]:
+    """Простой fallback парсер (для GitHub Actions без src/)."""
     if not content:
         return [{"tag": "p", "children": ["Контент отсутствует"]}]
 
@@ -190,35 +327,22 @@ def content_to_telegraph_nodes(content: str, images: List[str] = None) -> List[D
     remaining = list(images)
     nodes = []
 
-    # Обложка
     if remaining:
         nodes.append({"tag": "figure", "children": [
             {"tag": "img", "attrs": {"src": remaining.pop(0)}}
         ]})
 
-    # Разбиваем на абзацы
     paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
-    img_every = 3  # картинка каждые 3 абзаца
 
     for i, para in enumerate(paragraphs):
-        # Короткая строка без пунктуации → подзаголовок
         if len(para) < 80 and not para.endswith((".", ":", "!", "?", ",")):
             nodes.append({"tag": "h4", "children": [para]})
         else:
             nodes.append({"tag": "p", "children": [para]})
 
-        # Вставляем картинку
-        if remaining and (i + 1) % img_every == 0:
+        if remaining and (i + 1) % 3 == 0:
             nodes.append({"tag": "figure", "children": [
                 {"tag": "img", "attrs": {"src": remaining.pop(0)}}
-            ]})
-
-    # Оставшиеся картинки
-    if remaining:
-        nodes.append({"tag": "hr"})
-        for img in remaining[:5]:
-            nodes.append({"tag": "figure", "children": [
-                {"tag": "img", "attrs": {"src": img}}
             ]})
 
     return nodes
@@ -364,7 +488,13 @@ async def publish_articles(
 
         # --- Telegraph ---
         try:
-            t_content = article.get("editorial_rewritten") or article.get("content") or ""
+            # Приоритет: telegraph_content_html (от TelegraphFormatterAgent) → editorial_rewritten → content
+            t_content = (
+                article.get("telegraph_content_html")
+                or article.get("editorial_rewritten")
+                or article.get("content")
+                or ""
+            )
             t_images = article.get("images") or []
             if isinstance(t_images, str):
                 try:

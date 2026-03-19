@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-AI Агенты v9.1
+AI Агенты v9.2
 
 Изменения:
 - Интеграция с SkiplistService
 - Chunking для длинных текстов
 - Исключение слабых моделей
+- TelegraphFormatterAgent для разметки Telegraph
 """
 
 from src.application.ai_services.agents.base_agent import (
@@ -18,9 +19,10 @@ from src.application.ai_services.agents.rewriter_agent import RewriterAgent
 from src.application.ai_services.agents.summarizer_agent import SummarizerAgent
 from src.application.ai_services.agents.style_normalizer_agent import StyleNormalizerAgent
 from src.application.ai_services.agents.telegram_formatter_agent import TelegramFormatterAgent
+from src.application.ai_services.agents.telegraph_formatter_agent import TelegraphFormatterAgent
 from src.application.ai_services.agents.quality_validator_agent import QualityValidatorAgent
 
-__version__ = "9.1"
+__version__ = "9.2"
 
 __all__ = [
     'BaseAgent',
@@ -31,5 +33,6 @@ __all__ = [
     'SummarizerAgent',
     'StyleNormalizerAgent',
     'TelegramFormatterAgent',
+    'TelegraphFormatterAgent',
     'QualityValidatorAgent',
 ]

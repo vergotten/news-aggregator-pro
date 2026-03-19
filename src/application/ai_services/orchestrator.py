@@ -34,6 +34,7 @@ from src.application.ai_services.agents import (
     QualityValidatorAgent,
 )
 from src.application.ai_services.agents.telegram_formatter_agent import TelegramFormatterAgent
+from src.application.ai_services.agents.telegraph_formatter_agent import TelegraphFormatterAgent
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,7 @@ class AIOrchestrator:
             self._normalizer: Optional[StyleNormalizerAgent] = None
             self._validator: Optional[QualityValidatorAgent] = None
             self._telegram_formatter: Optional[TelegramFormatterAgent] = None
+            self._telegraph_formatter: Optional[TelegraphFormatterAgent] = None
 
             # Qdrant
             self.qdrant = QdrantService()
@@ -172,6 +174,12 @@ class AIOrchestrator:
         if self._telegram_formatter is None:
             self._telegram_formatter = TelegramFormatterAgent()
         return self._telegram_formatter
+
+    @property
+    def telegraph_formatter(self) -> TelegraphFormatterAgent:
+        if self._telegraph_formatter is None:
+            self._telegraph_formatter = TelegraphFormatterAgent()
+        return self._telegraph_formatter
 
     # =========================================================================
     # Основной метод обработки
@@ -398,6 +406,41 @@ class AIOrchestrator:
                 logger.warning(f"[Orchestrator] Telegram formatting failed: {e}")
 
             # =========================================================
+            # ШАГ 8: Telegraph форматирование (markdown разметка)
+            # =========================================================
+            logger.info("[Orchestrator] Step 8: Telegraph formatting...")
+            step_start = time.time()
+
+            try:
+                telegraph_content = article.editorial_rewritten or article.content or ""
+
+                if len(telegraph_content) > 500:
+                    telegraph_result = self.telegraph_formatter.format_for_telegraph(
+                        content=telegraph_content
+                    )
+
+                    article.telegraph_content_html = telegraph_result.formatted_text
+
+                    step_time = time.time() - step_start
+                    stats.model_attempts.append(ModelAttempt(
+                        model_id=self.telegraph_formatter.model,
+                        success=True,
+                        response_time=step_time
+                    ))
+
+                    logger.info(
+                        f"[Orchestrator] Telegraph: {telegraph_result.original_length} → "
+                        f"{telegraph_result.final_length} chars "
+                        f"(compressed={telegraph_result.was_compressed}, "
+                        f"formatted={telegraph_result.was_formatted})"
+                    )
+                else:
+                    logger.info("[Orchestrator] Telegraph: контент слишком короткий, пропуск")
+
+            except Exception as e:
+                logger.warning(f"[Orchestrator] Telegraph formatting failed: {e}")
+
+            # =========================================================
             # Завершение
             # =========================================================
             stats.success = True
@@ -485,6 +528,7 @@ class AIOrchestrator:
                 "normalizer": self._normalizer is not None,
                 "validator": self._validator is not None,
                 "telegram_formatter": self._telegram_formatter is not None,
+                "telegraph_formatter": self._telegraph_formatter is not None,
             }
         }
 
