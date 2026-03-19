@@ -5,8 +5,55 @@
     <description>Curated tech news from Habr and more</description>
     <link>https://github.com</link>
     <language>ru</language>
-    <lastBuildDate>Thu, 19 Mar 2026 07:08:19 +0000</lastBuildDate>
+    <lastBuildDate>Thu, 19 Mar 2026 13:23:29 +0000</lastBuildDate>
     <generator>news-aggregator-pro/generate_rss.py</generator>
+    <item>
+      <title>Эволюция логирования в Lenta tech: переход от Loki к Victoria Logs</title>
+      <link>https://telegra.ph/EHvolyuciya-logirovaniya-v-Lenta-tech-perehod-ot-Loki-k-Victoria-Logs-03-19</link>
+      <guid isPermaLink="false">99e17494-10bf-4eaa-872b-439ab53b2b44</guid>
+      <description>Lenta tech описывает эволюцию системы логирования от Loki к Victoria Logs. Обсуждаются бюджетные ограничения и технические решения для обработки терабайт логов ежедневно.</description>
+      <pubDate>Thu, 19 Mar 2026 07:52:35 +0000</pubDate>
+      <category>Блог компании Lenta tech</category>
+      <category>*nix</category>
+      <category>Amazon Web Services</category>
+      <category>DevOps</category>
+      <category>Python</category>
+    </item>
+    <item>
+      <title>Обзор платформы «Атом.Мост»: функции и возможности</title>
+      <link>https://telegra.ph/Obzor-platformy-AtomMost-funkcii-i-vozmozhnosti-03-19</link>
+      <guid isPermaLink="false">cbdb0520-5c3a-4ed4-b6e1-f5ed93f2685d</guid>
+      <description>Технический директор компании «Белый код» Сергей Скирдин представляет обзор продукта «Атом.Мост» от «Гринатом». Обсуждаются особенности шины данных и ее применение в корпоративной архитектуре.</description>
+      <pubDate>Tue, 17 Mar 2026 07:42:53 +0000</pubDate>
+      <category>Блог компании ИТ-интегратор Белый код</category>
+      <category>IT-компании</category>
+      <category>Open source</category>
+      <category>IT-инфраструктура</category>
+    </item>
+    <item>
+      <title>Автоматизация сканирования инфраструктуры: версия 3.0 скрипта для Сканер-ВС 7</title>
+      <link>https://telegra.ph/Avtomatizaciya-skanirovaniya-infrastruktury-versiya-30-skripta-dlya-Skaner-VS-7-03-19</link>
+      <guid isPermaLink="false">ad37ce55-777e-45e5-bd58-8526fc912b74</guid>
+      <description>Обновлен скрипт для Сканер-ВС 7, автоматизирующий сканирование инфраструктуры и формирование отчетов. Упрощен пайплайн и интегрированы новые возможности API.</description>
+      <pubDate>Tue, 17 Mar 2026 08:00:07 +0000</pubDate>
+      <category>Блог компании Selectel</category>
+      <category>Информационная безопасность</category>
+      <category>Python</category>
+      <category>IT-инфраструктура</category>
+      <category>Программирование</category>
+    </item>
+    <item>
+      <title>Тестировщик вступил в коммьюнити-стартап с нейронными сетями и создал ИИ-генератор заглушек</title>
+      <link>https://telegra.ph/Testirovshchik-vstupil-v-kommyuniti-startap-s-nejronnymi-setyami-i-sozdal-II-generator-zaglushek-03-19</link>
+      <guid isPermaLink="false">1b9fe557-6815-461c-907f-ae25feed4359</guid>
+      <description>Тестировщик Стас, осознав важность нейронных сетей, начал изучать ИИ и создал Телеграм-бота для определения уровня английского. Вдохновленный успехом, он вступил в комьюнити AlfaGen и предложил проект по созданию агента для генерации заглушек.</description>
+      <pubDate>Tue, 17 Mar 2026 08:03:09 +0000</pubDate>
+      <category>Блог компании Альфа-Банк</category>
+      <category>Тестирование IT-систем</category>
+      <category>Искусственный интеллект</category>
+      <category>Карьера в IT-индустрии</category>
+      <category>IT-инфраструктура</category>
+    </item>
     <item>
       <title>Капсульный фреймворк: упаковка архитектуры в ДНК проектов</title>
       <link>https://telegra.ph/Kapsulnyj-frejmvork-upakovka-arhitektury-v-DNK-proektov-03-19</link>
