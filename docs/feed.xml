@@ -5,8 +5,102 @@
     <description>Curated tech news from Habr and more</description>
     <link>https://github.com</link>
     <language>ru</language>
-    <lastBuildDate>Thu, 19 Mar 2026 16:45:04 +0000</lastBuildDate>
+    <lastBuildDate>Fri, 20 Mar 2026 12:19:39 +0000</lastBuildDate>
     <generator>news-aggregator-pro/generate_rss.py</generator>
+    <item>
+      <title>Что сейчас происходит с рынком ИТ-специалистов</title>
+      <link>https://telegra.ph/CHto-sejchas-proishodit-s-rynkom-IT-specialistov-03-20</link>
+      <guid isPermaLink="false">5572ec59-4615-4383-99b9-d1ec5ff76c02</guid>
+      <pubDate>Tue, 17 Mar 2026 07:57:19 +0000</pubDate>
+      <category>Карьера в IT-индустрии</category>
+      <category>Открытые данные</category>
+    </item>
+    <item>
+      <title>Космос-2055: как будет выглядеть космонавтика через 30 лет?</title>
+      <link>https://telegra.ph/Kosmos-2055-kak-budet-vyglyadet-kosmonavtika-cherez-30-let-03-20</link>
+      <guid isPermaLink="false">2e968a2d-0947-4c76-9407-d4a0fe042c37</guid>
+      <pubDate>Tue, 17 Mar 2026 08:00:13 +0000</pubDate>
+      <category>Блог компании МТС</category>
+      <category>Космонавтика</category>
+      <category>Будущее здесь</category>
+    </item>
+    <item>
+      <title>Как я в одиночку начинаю IoT-стартап на Rust в Бразилии</title>
+      <link>https://telegra.ph/Kak-ya-v-odinochku-nachinayu-IoT-startap-na-Rust-v-Brazilii-03-20</link>
+      <guid isPermaLink="false">b28dbc9b-2181-4fa9-bd16-11dc1fa7f3a8</guid>
+      <pubDate>Sun, 15 Mar 2026 03:08:09 +0000</pubDate>
+      <category>Rust</category>
+    </item>
+    <item>
+      <title>От франчайзи 1С к аутстаффингу</title>
+      <link>https://telegra.ph/Ot-franchajzi-1S-k-autstaffingu-03-20</link>
+      <guid isPermaLink="false">874cb22e-2b0a-4c82-9bb6-b78086ebbfae</guid>
+      <pubDate>Thu, 19 Mar 2026 07:48:10 +0000</pubDate>
+      <category>1С</category>
+    </item>
+    <item>
+      <title>Пси-словарь для айтишников v1.0: Документация к человеческим отношениям для инженеров</title>
+      <link>https://telegra.ph/Psi-slovar-dlya-ajtishnikov-v10-Dokumentaciya-k-chelovecheskim-otnosheniyam-dlya-inzhenerov-03-20</link>
+      <guid isPermaLink="false">c5e6296e-96ab-49f0-b542-bd0f8d12f0c0</guid>
+      <pubDate>Tue, 17 Mar 2026 08:00:04 +0000</pubDate>
+      <category>Здоровье</category>
+      <category>Лайфхаки для гиков</category>
+      <category>Мозг</category>
+      <category>Читальный зал</category>
+    </item>
+    <item>
+      <title>Написание 46K строк на Claude Code: практические рекомендации</title>
+      <link>https://telegra.ph/Napisanie-46K-strok-na-Claude-Code-prakticheskie-rekomendacii-03-20</link>
+      <guid isPermaLink="false">abaaf9e4-9116-430f-8f47-699ea98a0a64</guid>
+      <description>Создание коммерческого проекта с нуля с помощью вайбкодинга: 46 000 строк кода, два месяца, два разработчика. Использование AI для управления задачами и декомпозиции в Jira.</description>
+      <pubDate>Thu, 19 Mar 2026 07:59:38 +0000</pubDate>
+      <category>Искусственный интеллект</category>
+      <category>NestJS</category>
+      <category>TypeScript</category>
+      <category>Веб-разработка</category>
+      <category>CRM-системы</category>
+    </item>
+    <item>
+      <title>41 034 метода, 2 170 файлов: организуем кодовое знание за пределы одного человека</title>
+      <link>https://telegra.ph/41-034-metoda-2-170-fajlov-organizuem-kodovoe-znanie-za-predely-odnogo-cheloveka-03-20</link>
+      <guid isPermaLink="false">c226e4a1-673b-4560-a05b-cc23ceeed9d6</guid>
+      <description>Проект с 12 093 методами и 1183 файлами Python стал примером отсутствия документации. Новый подход использует граф свойств кода для быстрого понимания сложных сценариев.</description>
+      <pubDate>Thu, 19 Mar 2026 07:37:02 +0000</pubDate>
+      <category>Качество кода</category>
+      <category>Программирование</category>
+      <category>Развитие стартапа</category>
+    </item>
+    <item>
+      <title>Kling Motion Control 3.0 Pro: Новая нейросеть для переноса движений в России</title>
+      <link>https://telegra.ph/Kling-Motion-Control-30-Pro-Novaya-nejroset-dlya-perenosa-dvizhenij-v-Rossii-03-20</link>
+      <guid isPermaLink="false">13cee51d-1911-42b1-9e5e-d1d365c29580</guid>
+      <description>Kling Video 3.0 Motion Control Pro представляет улучшенный перенос движений с видео на фото. Инструмент сохраняет лицо персонажа при поворотах и обеспечивает 4K качество.</description>
+      <pubDate>Thu, 19 Mar 2026 07:54:10 +0000</pubDate>
+      <category>Блог компании StudyAI</category>
+    </item>
+    <item>
+      <title>Запуск корпоративной BI+ETL-системы за 1,5 млн рублей: PolyAnalyst ETL+BI</title>
+      <link>https://telegra.ph/Zapusk-korporativnoj-BIETL-sistemy-za-15-mln-rublej-PolyAnalyst-ETLBI-03-20</link>
+      <guid isPermaLink="false">57c40267-3a4c-4ed2-a1c8-74e4a626d116</guid>
+      <description>Исследуется возможность внедрения отечественной BI+ETL-системы за 1,5 млн рублей. Рассмотрены PolyAnalyst ETL+BI, архитектура и компоненты.</description>
+      <pubDate>Thu, 19 Mar 2026 07:58:58 +0000</pubDate>
+      <category>Блог компании ИТ-интегратор Белый код</category>
+      <category>Визуализация данных</category>
+      <category>Хранение данных</category>
+      <category>Анализ и проектирование систем</category>
+    </item>
+    <item>
+      <title>Аналитики данных: использование ИИ в профессиональной деятельности</title>
+      <link>https://telegra.ph/Analitiki-dannyh-ispolzovanie-II-v-professionalnoj-deyatelnosti-03-20</link>
+      <guid isPermaLink="false">01b0260d-7599-4cab-ae94-d1a5b0b8d11f</guid>
+      <description>ИИ меняет подход аналитиков данных к работе, но не заменяет профессиональные навыки. Использование нейросетей требует дополнительных знаний и умений для эффективного применения.</description>
+      <pubDate>Tue, 17 Mar 2026 07:37:24 +0000</pubDate>
+      <category>Блог компании Яндекс Практикум</category>
+      <category>Анализ и проектирование систем</category>
+      <category>Карьера в IT-индустрии</category>
+      <category>Учебный процесс в IT</category>
+      <category>Искусственный интеллект</category>
+    </item>
     <item>
       <title>Математик 20 лет создавал неразрешимую задачу, но GPT-5.4 нарушил его концепцию мира</title>
       <link>https://telegra.ph/Matematik-20-let-sozdaval-nerazreshimuyu-zadachu-no-GPT-54-narushil-ego-koncepciyu-mira-03-19</link>
