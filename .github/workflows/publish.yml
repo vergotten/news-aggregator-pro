@@ -11,9 +11,7 @@ name: Publish & RSS
 
 on:
   schedule:
-    - cron: '0 6 * * *'   # 09:00 MSK
     - cron: '0 12 * * *'  # 15:00 MSK
-    - cron: '0 16 * * *'  # 19:00 MSK
 
   workflow_dispatch:
     inputs:
