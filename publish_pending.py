@@ -174,40 +174,33 @@ def telegraph_publish(title: str, content: str, images: List[str] = None,
             content = truncated + "\n\n[Текст сокращён]"
         logger.warning(f"Telegraph: контент обрезан до {len(content)} chars")
 
-    # Используем TelegraphPublisher v3.1 (правильный парсинг markdown, bold, заголовков)
-    try:
-        from src.infrastructure.telegram.telegraph_publisher import TelegraphPublisher
-        pub = TelegraphPublisher()
-        result = pub.create_page(
-            title=title,
-            content=content,
-            images=images or [],
-            author_name=author or os.getenv("TELEGRAPH_AUTHOR", "News Aggregator"),
-        )
-        if result.success:
-            logger.info(f"Telegraph: {result.url}")
-            return result.url
-        else:
-            logger.error(f"Telegraph error: {result.error}")
-            return None
-    except ImportError:
-        logger.warning("TelegraphPublisher не доступен, используем fallback")
-        nodes = content_to_telegraph_nodes(content, images)
+    nodes = content_to_telegraph_nodes(content, images)
+
+    # Проверяем размер JSON
+    content_json = json.dumps(nodes, ensure_ascii=False)
+    if len(content_json) > 60000:
+        # Убираем изображения и пробуем снова
+        logger.warning(f"Telegraph: JSON слишком большой ({len(content_json)} bytes), убираем изображения")
+        nodes = content_to_telegraph_nodes(content, [])
         content_json = json.dumps(nodes, ensure_ascii=False)
-        resp = requests.post(f"{TELEGRAPH_API}/createPage", data={
-            "access_token": token,
-            "title": title[:256],
-            "author_name": author or os.getenv("TELEGRAPH_AUTHOR", "News Aggregator"),
-            "content": content_json,
-            "return_content": "false",
-        })
-        resp.raise_for_status()
-        result = resp.json()
-        if result.get("ok"):
-            return result["result"].get("url")
-        else:
-            logger.error(f"Telegraph error: {result.get('error', 'unknown')}")
-            return None
+
+    resp = requests.post(f"{TELEGRAPH_API}/createPage", data={
+        "access_token": token,
+        "title": title[:256],
+        "author_name": author or os.getenv("TELEGRAPH_AUTHOR", "News Aggregator"),
+        "content": content_json,
+        "return_content": "false",
+    })
+    resp.raise_for_status()
+    result = resp.json()
+
+    if result.get("ok"):
+        url = result["result"].get("url")
+        logger.info(f"Telegraph: {url}")
+        return url
+    else:
+        logger.error(f"Telegraph error: {result.get('error', 'unknown')}")
+        return None
 
 
 def content_to_telegraph_nodes(content: str, images: List[str] = None) -> List[Dict]:

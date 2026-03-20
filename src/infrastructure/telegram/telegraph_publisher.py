@@ -296,9 +296,11 @@ class TelegraphPublisher:
         Улучшенное распознавание для plain text (без markdown маркеров).
         """
         blocks = []
-        # Гарантируем что ### заголовки отделены двойным переносом
+
+        # Гарантируем что ## заголовки отделены двойным переносом
         text = re.sub(r'\n(#{1,4}\s)', r'\n\n\1', text)
         text = re.sub(r'(#{1,4}\s.+)\n([^#\n])', r'\1\n\n\2', text)
+
         paragraphs = text.split("\n\n")
 
         for para in paragraphs:
