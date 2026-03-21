@@ -5,8 +5,16 @@
     <description>Curated tech news from Habr and more</description>
     <link>https://github.com</link>
     <language>ru</language>
-    <lastBuildDate>Sat, 21 Mar 2026 13:05:46 +0000</lastBuildDate>
+    <lastBuildDate>Sat, 21 Mar 2026 16:11:16 +0000</lastBuildDate>
     <generator>news-aggregator-pro/generate_rss.py</generator>
+    <item>
+      <title>Инструмент CLI для защиты структуры задач</title>
+      <link>https://telegra.ph/Instrument-CLI-dlya-zashchity-struktury-zadach-03-21</link>
+      <guid isPermaLink="false">97151294-9587-468c-a9d8-46aed154b481</guid>
+      <description>проблемы с использованием локальных ИИ-агентов для управления проектами и создание CLI-инструмента для защиты структуры задач.</description>
+      <pubDate>Fri, 20 Mar 2026 19:13:56 +0000</pubDate>
+      <category>Open source</category>
+    </item>
     <item>
       <title>Что сейчас происходит с рынком ИТ-специалистов</title>
       <link>https://telegra.ph/CHto-sejchas-proishodit-s-rynkom-IT-specialistov-03-20</link>
