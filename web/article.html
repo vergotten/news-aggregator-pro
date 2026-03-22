@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}{{ article.display_title }} — {{ site_title }}{% endblock %}
+{% block description %}{{ article.teaser[:160] }}{% endblock %}
+
+{% block content %}
+<article class="article-full">
+    {% if article.cover_image %}
+    <figure class="article-hero">
+        <img src="{{ article.cover_image }}" alt="{{ article.display_title }}">
+    </figure>
+    {% endif %}
+
+    <h1 class="article-full-title">{{ article.display_title }}</h1>
+
+    <div class="article-full-meta">
+        {% if article.author %}
+        <span class="meta-author">{{ article.author }}</span>
+        {% endif %}
+        {% if article.relevance_score %}
+        <span class="meta-score">Релевантность: {{ article.relevance_score }}/10</span>
+        {% endif %}
+        {% if article.telegraph_url %}
+        <a href="{{ article.telegraph_url }}" class="meta-telegraph" target="_blank">Telegraph</a>
+        {% endif %}
+    </div>
+
+    {% if article.tags %}
+    <div class="article-tags">
+        {% for tag in article.tags %}
+        <span class="tag">{{ tag }}</span>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="article-content">
+        {{ content_html | safe }}
+    </div>
+
+    <div class="article-footer">
+        {% if article.url %}
+        <a href="{{ article.url }}" target="_blank" class="source-link">Источник</a>
+        {% endif %}
+        <a href="/" class="back-link">&larr; Все статьи</a>
+    </div>
+</article>
+{% endblock %}
