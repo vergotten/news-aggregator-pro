@@ -54,7 +54,7 @@ for env_path in [
 
 
 def get_db_url():
-    return os.getenv("SUPABASE_DATABASE_URL") or os.getenv("DATABASE_URL", "")
+    return os.getenv("DATABASE_URL") or os.getenv("DATABASE_URL", "")
 
 
 def get_conn():
