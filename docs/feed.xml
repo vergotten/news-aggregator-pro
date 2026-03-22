@@ -5,8 +5,26 @@
     <description>Curated tech news from Habr and more</description>
     <link>https://github.com</link>
     <language>ru</language>
-    <lastBuildDate>Sat, 21 Mar 2026 16:11:16 +0000</lastBuildDate>
+    <lastBuildDate>Sun, 22 Mar 2026 13:07:52 +0000</lastBuildDate>
     <generator>news-aggregator-pro/generate_rss.py</generator>
+    <item>
+      <title>Запуск Open-Sora с 15 ГБ VRAM: Трюки с reverse-engineering и monkey-patching</title>
+      <link>https://telegra.ph/Zapusk-Open-Sora-s-15-GB-VRAM-Tryuki-s-reverse-engineering-i-monkey-patching-03-22</link>
+      <guid isPermaLink="false">a4eb70c8-9f49-437c-9955-128f23810994</guid>
+      <description>Энтузиасты преодолели ограничения Google Colab, запустив модель Open-Sora-Plan на видеокарте NVIDIA T4 с 15 ГБ VRAM. Процесс включал реверс-инжиниринг и monkey-patching для борьбы с аппаратными ограничениями.</description>
+      <pubDate>Fri, 20 Mar 2026 21:40:45 +0000</pubDate>
+      <category>Ненормальное программирование</category>
+    </item>
+    <item>
+      <title>Замена тестировщика на AI-агента:</title>
+      <link>https://telegra.ph/Zamena-testirovshchika-na-AI-agenta案例给出的指令和原文似乎不完全匹配提供的俄文原文与中文翻译或解释不对应根据给定的俄文原文和规则正确的翻译应为-03-22</link>
+      <guid isPermaLink="false">86758292-54a9-47e5-ad49-68b4e0bc0050</guid>
+      <description>RankCaster AI заменил QA тестировщика на автономного AI-агента за 24 часа, сократив время регрессионного анализа с 48 до нескольких часов.</description>
+      <pubDate>Fri, 20 Mar 2026 21:56:21 +0000</pubDate>
+      <category>Развитие стартапа</category>
+      <category>Управление разработкой</category>
+      <category>Тестирование веб-сервисов</category>
+    </item>
     <item>
       <title>Инструмент CLI для защиты структуры задач</title>
       <link>https://telegra.ph/Instrument-CLI-dlya-zashchity-struktury-zadach-03-21</link>
