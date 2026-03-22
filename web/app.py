@@ -30,7 +30,7 @@ import psycopg2.extras
 # Конфигурация
 # =================================================================
 
-SITE_TITLE = "AI Digest"
+SITE_TITLE = "НейроКотΔ"
 SITE_DESCRIPTION = "Технические статьи с AI-обработкой"
 SITE_URL = os.getenv("SITE_URL", "http://localhost:8080")
 SITE_LANGUAGE = "ru"
