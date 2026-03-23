@@ -490,29 +490,29 @@ class AIOrchestrator:
             # =========================================================
             # ШАГ 10: Трансформация изображений
             # =========================================================
-            # logger.info("[Orchestrator] Step 10: Image transformation...")
-            # step_start = time.time()
-            #
-            # try:
-            #     images = getattr(article, 'images', []) or []
-            #     if images:
-            #         transform_result = self.image_transform.transform_images(images)
-            #
-            #         if transform_result.success_count > 0:
-            #             article.images = transform_result.transformed_urls
-            #             logger.info(
-            #                 f"[Orchestrator] Images: {transform_result.success_count}/"
-            #                 f"{len(images)} transformed"
-            #             )
-            #         else:
-            #             logger.warning("[Orchestrator] Images: no transforms succeeded, keeping originals")
-            #     else:
-            #         logger.info("[Orchestrator] Images: нет изображений, пропуск")
-            #
-            #     step_time = time.time() - step_start
-            #
-            # except Exception as e:
-            #     logger.warning(f"[Orchestrator] Image transformation failed: {e}")
+            logger.info("[Orchestrator] Step 10: Image transformation...")
+            step_start = time.time()
+
+            try:
+                images = getattr(article, 'images', []) or []
+                if images:
+                    transform_result = self.image_transform.transform_images(images)
+
+                    if transform_result.success_count > 0:
+                        article.images = transform_result.transformed_urls
+                        logger.info(
+                            f"[Orchestrator] Images: {transform_result.success_count}/"
+                            f"{len(images)} transformed"
+                        )
+                    else:
+                        logger.warning("[Orchestrator] Images: no transforms succeeded, keeping originals")
+                else:
+                    logger.info("[Orchestrator] Images: нет изображений, пропуск")
+
+                step_time = time.time() - step_start
+
+            except Exception as e:
+                logger.warning(f"[Orchestrator] Image transformation failed: {e}")
 
             # =========================================================
             # Завершение

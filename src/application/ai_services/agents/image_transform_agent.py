@@ -3,92 +3,107 @@
 # Путь: src/application/ai_services/agents/image_transform_agent.py
 # =============================================================================
 """
-Агент трансформации изображений v1.0
+Агент трансформации изображений v2.0
 
-Берёт изображения из статьи и слегка трансформирует каждое,
-чтобы они не были идентичны оригиналу (для Дзена и антиплагиата).
+Мягкие трансформации для уникальности картинок (Дзен антиплагиат).
+Загрузка результатов в Supabase Storage.
 
-Трансформации (все лёгкие, не портят качество):
-- Зум/crop 5-15% от центра
-- Rotation ±1-3°
-- Яркость ±5-10%
-- Контраст ±5-10%
-- Цветовой сдвиг (hue) ±5-10°
-- Лёгкий gaussian noise
-- Resize up-down (меняет пиксели)
-- JPEG recompression (другой quality)
-- Лёгкий vignette (затемнение краёв)
-- Гамма-коррекция
+Трансформации (мягкие, не портят текст/графики):
+- Brightness ±5%
+- Contrast ±5%
+- Saturation ±5%
+- Gaussian noise (sigma=2-3)
+- Gamma correction ±5%
+- JPEG recompress (quality 85-93)
+- Resize up-down (интерполяция меняет пиксели)
 
-Не использует LLM, не требует GPU.
+Включение/выключение: ENABLE_IMAGE_TRANSFORM=true/false в .env
+
 Зависимости: Pillow, numpy, requests
-
-Результат: список URL трансформированных изображений (загруженных на Telegraph).
 """
 
 import io
+import os
 import logging
 import random
-from typing import List, Optional, Tuple
+import hashlib
+import time
+from typing import List, Optional
 
 import numpy as np
 import requests
-from PIL import Image, ImageEnhance, ImageFilter
+from PIL import Image, ImageEnhance
 
 logger = logging.getLogger(__name__)
 
-# Параметры трансформаций
-CROP_RANGE = (0.05, 0.12)       # 5-12% зум
-ROTATION_RANGE = (-2.5, 2.5)    # ±2.5°
-BRIGHTNESS_RANGE = (0.92, 1.08)  # ±8%
-CONTRAST_RANGE = (0.93, 1.07)    # ±7%
-SATURATION_RANGE = (0.93, 1.07)  # ±7%
-NOISE_STRENGTH = 3               # sigma для gaussian noise
-GAMMA_RANGE = (0.92, 1.08)       # гамма-коррекция
-JPEG_QUALITY_RANGE = (85, 93)    # качество JPEG при сохранении
-VIGNETTE_STRENGTH = 0.15         # сила затемнения краёв
-
+BRIGHTNESS_RANGE = (0.95, 1.05)
+CONTRAST_RANGE = (0.95, 1.05)
+SATURATION_RANGE = (0.95, 1.05)
+NOISE_STRENGTH = 2.5
+GAMMA_RANGE = (0.95, 1.05)
+JPEG_QUALITY_RANGE = (85, 93)
 REQUEST_TIMEOUT = 30
+
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://vhsnoprsdxvcztdickfd.supabase.co")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
+SUPABASE_BUCKET = "images"
+
+
+def is_enabled() -> bool:
+    val = os.getenv("ENABLE_IMAGE_TRANSFORM", "true").lower()
+    return val in ("true", "1", "yes", "on")
 
 
 class ImageTransformResult:
-    """Результат трансформации изображений."""
     def __init__(self):
         self.original_urls: List[str] = []
         self.transformed_urls: List[str] = []
         self.success_count: int = 0
         self.error_count: int = 0
+        self.skipped: bool = False
         self.errors: List[str] = []
 
 
 class ImageTransformAgent:
-    """
-    Агент трансформации изображений v1.0
-
-    Не наследует BaseAgent — не использует LLM.
-    Чистый PIL/numpy для обработки изображений.
-    """
-
     agent_name = "image_transform"
 
-    def __init__(self, upload_to_telegraph: bool = True):
-        self.upload_to_telegraph = upload_to_telegraph
-        logger.info("[INIT] ImageTransformAgent v1.0")
+    def __init__(self):
+        self.supabase_url = SUPABASE_URL
+        self.supabase_key = SUPABASE_ANON_KEY or self._load_key_from_env()
+        self.bucket = SUPABASE_BUCKET
+        self.enabled = is_enabled()
+        logger.info(f"[INIT] ImageTransformAgent v2.0 (enabled={self.enabled}, storage=Supabase)")
+
+    def _load_key_from_env(self) -> str:
+        for env_path in [
+            os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", ".env"),
+            os.path.join(os.getcwd(), ".env"),
+        ]:
+            if os.path.exists(env_path):
+                with open(env_path) as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith("SUPABASE_ANON_KEY="):
+                            return line.split("=", 1)[1].strip().strip('"').strip("'")
+        return ""
 
     def transform_images(self, image_urls: List[str]) -> ImageTransformResult:
-        """
-        Трансформировать список изображений.
-
-        Args:
-            image_urls: список URL оригинальных изображений
-
-        Returns:
-            ImageTransformResult с новыми URL
-        """
         result = ImageTransformResult()
         result.original_urls = list(image_urls)
 
         if not image_urls:
+            return result
+
+        if not self.enabled:
+            logger.info("[ImageTransform] ОТКЛЮЧЕН (ENABLE_IMAGE_TRANSFORM=false)")
+            result.transformed_urls = list(image_urls)
+            result.skipped = True
+            return result
+
+        if not self.supabase_key:
+            logger.warning("[ImageTransform] SUPABASE_ANON_KEY не задан, пропуск")
+            result.transformed_urls = list(image_urls)
+            result.skipped = True
             return result
 
         logger.info(f"[ImageTransform] Обработка {len(image_urls)} изображений")
@@ -97,29 +112,25 @@ class ImageTransformAgent:
             try:
                 logger.info(f"[ImageTransform] [{i}/{len(image_urls)}] {url[:60]}...")
 
-                # Скачиваем
                 img = self._download_image(url)
                 if img is None:
                     result.error_count += 1
-                    result.errors.append(f"Не удалось скачать: {url[:60]}")
-                    result.transformed_urls.append(url)  # оставляем оригинал
+                    result.errors.append(f"Download failed: {url[:60]}")
+                    result.transformed_urls.append(url)
                     continue
 
-                # Трансформируем
-                transformed = self._apply_transforms(img)
+                transformed = self._apply_soft_transforms(img)
 
-                # Загружаем обратно
-                if self.upload_to_telegraph:
-                    new_url = self._upload_to_telegraph(transformed)
-                    if new_url:
-                        result.transformed_urls.append(new_url)
-                        result.success_count += 1
-                        logger.info(f"[ImageTransform] OK: {new_url}")
-                        continue
+                filename = self._generate_filename(url, i)
+                new_url = self._upload_to_supabase(transformed, filename)
 
-                # Fallback: оставляем оригинал
-                result.transformed_urls.append(url)
-                result.error_count += 1
+                if new_url:
+                    result.transformed_urls.append(new_url)
+                    result.success_count += 1
+                    logger.info(f"[ImageTransform] OK → {new_url[:60]}...")
+                else:
+                    result.transformed_urls.append(url)
+                    result.error_count += 1
 
             except Exception as e:
                 logger.warning(f"[ImageTransform] Ошибка [{i}]: {e}")
@@ -134,7 +145,6 @@ class ImageTransformAgent:
         return result
 
     def _download_image(self, url: str) -> Optional[Image.Image]:
-        """Скачать изображение по URL."""
         try:
             resp = requests.get(url, timeout=REQUEST_TIMEOUT)
             if resp.status_code != 200:
@@ -142,10 +152,10 @@ class ImageTransformAgent:
                 return None
 
             img = Image.open(io.BytesIO(resp.content))
-            # Конвертируем в RGB если нужно
+
             if img.mode in ('RGBA', 'P', 'LA'):
                 background = Image.new('RGB', img.size, (255, 255, 255))
-                if img.mode == 'RGBA' or img.mode == 'LA':
+                if img.mode in ('RGBA', 'LA'):
                     background.paste(img, mask=img.split()[-1])
                 else:
                     background.paste(img)
@@ -159,145 +169,65 @@ class ImageTransformAgent:
             logger.warning(f"[ImageTransform] Download error: {e}")
             return None
 
-    def _apply_transforms(self, img: Image.Image) -> Image.Image:
-        """Применить набор лёгких трансформаций."""
-        original_size = img.size
+    def _apply_soft_transforms(self, img: Image.Image) -> Image.Image:
+        # Brightness ±5%
+        img = ImageEnhance.Brightness(img).enhance(random.uniform(*BRIGHTNESS_RANGE))
 
-        # 1. Crop/Zoom (5-12%)
-        img = self._apply_crop(img)
+        # Contrast ±5%
+        img = ImageEnhance.Contrast(img).enhance(random.uniform(*CONTRAST_RANGE))
 
-        # 2. Rotation (±2.5°)
-        img = self._apply_rotation(img)
+        # Saturation ±5%
+        img = ImageEnhance.Color(img).enhance(random.uniform(*SATURATION_RANGE))
 
-        # 3. Brightness (±8%)
-        img = self._apply_brightness(img)
-
-        # 4. Contrast (±7%)
-        img = self._apply_contrast(img)
-
-        # 5. Saturation/Color (±7%)
-        img = self._apply_saturation(img)
-
-        # 6. Gaussian noise
-        img = self._apply_noise(img)
-
-        # 7. Gamma correction
-        img = self._apply_gamma(img)
-
-        # 8. Vignette (затемнение краёв)
-        img = self._apply_vignette(img)
-
-        # 9. Resize up-down (меняет пиксели через интерполяцию)
-        img = self._apply_resize_trick(img)
-
-        # Вернуть к оригинальному размеру
-        if img.size != original_size:
-            img = img.resize(original_size, Image.LANCZOS)
-
-        return img
-
-    def _apply_crop(self, img: Image.Image) -> Image.Image:
-        """Зум: обрезать края на 5-12%."""
-        w, h = img.size
-        crop_pct = random.uniform(*CROP_RANGE)
-        left = int(w * crop_pct / 2)
-        top = int(h * crop_pct / 2)
-        right = w - left
-        bottom = h - top
-        cropped = img.crop((left, top, right, bottom))
-        return cropped.resize((w, h), Image.LANCZOS)
-
-    def _apply_rotation(self, img: Image.Image) -> Image.Image:
-        """Лёгкий поворот ±2.5°."""
-        angle = random.uniform(*ROTATION_RANGE)
-        return img.rotate(angle, resample=Image.BICUBIC, expand=False, fillcolor=(255, 255, 255))
-
-    def _apply_brightness(self, img: Image.Image) -> Image.Image:
-        """Яркость ±8%."""
-        factor = random.uniform(*BRIGHTNESS_RANGE)
-        enhancer = ImageEnhance.Brightness(img)
-        return enhancer.enhance(factor)
-
-    def _apply_contrast(self, img: Image.Image) -> Image.Image:
-        """Контраст ±7%."""
-        factor = random.uniform(*CONTRAST_RANGE)
-        enhancer = ImageEnhance.Contrast(img)
-        return enhancer.enhance(factor)
-
-    def _apply_saturation(self, img: Image.Image) -> Image.Image:
-        """Насыщенность ±7%."""
-        factor = random.uniform(*SATURATION_RANGE)
-        enhancer = ImageEnhance.Color(img)
-        return enhancer.enhance(factor)
-
-    def _apply_noise(self, img: Image.Image) -> Image.Image:
-        """Лёгкий gaussian noise."""
+        # Gaussian noise
         arr = np.array(img, dtype=np.float32)
         noise = np.random.normal(0, NOISE_STRENGTH, arr.shape)
         arr = np.clip(arr + noise, 0, 255).astype(np.uint8)
-        return Image.fromarray(arr)
+        img = Image.fromarray(arr)
 
-    def _apply_gamma(self, img: Image.Image) -> Image.Image:
-        """Гамма-коррекция."""
+        # Gamma correction ±5%
         gamma = random.uniform(*GAMMA_RANGE)
-        inv_gamma = 1.0 / gamma
         arr = np.array(img, dtype=np.float32) / 255.0
-        arr = np.power(arr, inv_gamma)
+        arr = np.power(arr, 1.0 / gamma)
         arr = (arr * 255).clip(0, 255).astype(np.uint8)
-        return Image.fromarray(arr)
+        img = Image.fromarray(arr)
 
-    def _apply_vignette(self, img: Image.Image) -> Image.Image:
-        """Затемнение краёв (vignette)."""
+        # Resize up-down
         w, h = img.size
-        arr = np.array(img, dtype=np.float32)
-
-        # Создаём маску затемнения
-        Y, X = np.ogrid[:h, :w]
-        cx, cy = w / 2, h / 2
-        # Нормализованное расстояние от центра (0 в центре, 1 на углах)
-        dist = np.sqrt((X - cx) ** 2 + (Y - cy) ** 2)
-        max_dist = np.sqrt(cx ** 2 + cy ** 2)
-        dist = dist / max_dist
-
-        # Применяем затемнение только к краям
-        mask = 1.0 - VIGNETTE_STRENGTH * (dist ** 2)
-        mask = mask[:, :, np.newaxis]  # добавляем ось для RGB
-
-        arr = arr * mask
-        arr = arr.clip(0, 255).astype(np.uint8)
-        return Image.fromarray(arr)
-
-    def _apply_resize_trick(self, img: Image.Image) -> Image.Image:
-        """Resize up потом down — меняет пиксели через интерполяцию."""
-        w, h = img.size
-        scale = random.uniform(1.08, 1.15)
+        scale = random.uniform(1.08, 1.12)
         big = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
-        return big.resize((w, h), Image.LANCZOS)
+        img = big.resize((w, h), Image.LANCZOS)
 
-    def _upload_to_telegraph(self, img: Image.Image) -> Optional[str]:
-        """Загрузить трансформированное изображение на Telegraph."""
+        return img
+
+    def _generate_filename(self, original_url: str, index: int) -> str:
+        url_hash = hashlib.md5(original_url.encode()).hexdigest()[:8]
+        timestamp = int(time.time())
+        return f"img_{timestamp}_{url_hash}_{index}.jpg"
+
+    def _upload_to_supabase(self, img: Image.Image, filename: str) -> Optional[str]:
         try:
             buf = io.BytesIO()
             quality = random.randint(*JPEG_QUALITY_RANGE)
             img.save(buf, format='JPEG', quality=quality, optimize=True)
             buf.seek(0)
+            image_data = buf.read()
 
-            resp = requests.post(
-                "https://telegra.ph/upload",
-                files={"file": ("image.jpg", buf, "image/jpeg")},
-                timeout=REQUEST_TIMEOUT,
-            )
+            headers = {
+                'Authorization': f'Bearer {self.supabase_key}',
+                'apikey': self.supabase_key,
+                'Content-Type': 'image/jpeg',
+            }
 
-            if resp.status_code == 200:
-                result = resp.json()
-                if isinstance(result, list) and len(result) > 0:
-                    src = result[0].get("src", "")
-                    if src:
-                        return f"https://telegra.ph{src}"
+            upload_url = f"{self.supabase_url}/storage/v1/object/{self.bucket}/{filename}"
+            resp = requests.post(upload_url, headers=headers, data=image_data, timeout=REQUEST_TIMEOUT)
 
-            logger.warning(f"[ImageTransform] Telegraph upload: HTTP {resp.status_code}")
-            return None
+            if resp.status_code in (200, 201):
+                return f"{self.supabase_url}/storage/v1/object/public/{self.bucket}/{filename}"
+            else:
+                logger.warning(f"[ImageTransform] Supabase upload {resp.status_code}: {resp.text[:100]}")
+                return None
 
         except Exception as e:
-            logger.warning(f"[ImageTransform] Telegraph upload error: {e}")
+            logger.warning(f"[ImageTransform] Supabase upload error: {e}")
             return None
