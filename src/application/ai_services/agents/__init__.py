@@ -21,6 +21,9 @@ from src.application.ai_services.agents.style_normalizer_agent import StyleNorma
 from src.application.ai_services.agents.telegram_formatter_agent import TelegramFormatterAgent
 from src.application.ai_services.agents.telegraph_formatter_agent import TelegraphFormatterAgent
 from src.application.ai_services.agents.quality_validator_agent import QualityValidatorAgent
+from src.application.ai_services.agents.image_prompt_agent import ImagePromptAgent
+from src.application.ai_services.agents.image_transform_agent import ImageTransformAgent
+
 
 __version__ = "9.2"
 
@@ -35,4 +38,6 @@ __all__ = [
     'TelegramFormatterAgent',
     'TelegraphFormatterAgent',
     'QualityValidatorAgent',
+    'ImagePromptAgent',
+    'ImageTransformAgent',
 ]
