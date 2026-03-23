@@ -35,6 +35,8 @@ from src.application.ai_services.agents import (
 )
 from src.application.ai_services.agents.telegram_formatter_agent import TelegramFormatterAgent
 from src.application.ai_services.agents.telegraph_formatter_agent import TelegraphFormatterAgent
+from src.application.ai_services.agents.image_prompt_agent import ImagePromptAgent
+from src.application.ai_services.agents.image_transform_agent import ImageTransformAgent
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +116,8 @@ class AIOrchestrator:
             self._validator: Optional[QualityValidatorAgent] = None
             self._telegram_formatter: Optional[TelegramFormatterAgent] = None
             self._telegraph_formatter: Optional[TelegraphFormatterAgent] = None
+            self._image_prompt: Optional[ImagePromptAgent] = None
+            self._image_transform: Optional[ImageTransformAgent] = None
 
             # Qdrant
             self.qdrant = QdrantService()
@@ -180,6 +184,18 @@ class AIOrchestrator:
         if self._telegraph_formatter is None:
             self._telegraph_formatter = TelegraphFormatterAgent()
         return self._telegraph_formatter
+
+    @property
+    def image_prompt(self) -> ImagePromptAgent:
+        if self._image_prompt is None:
+            self._image_prompt = ImagePromptAgent()
+        return self._image_prompt
+
+    @property
+    def image_transform(self) -> ImageTransformAgent:
+        if self._image_transform is None:
+            self._image_transform = ImageTransformAgent()
+        return self._image_transform
 
     # =========================================================================
     # Основной метод обработки
@@ -439,6 +455,64 @@ class AIOrchestrator:
 
             except Exception as e:
                 logger.warning(f"[Orchestrator] Telegraph formatting failed: {e}")
+
+            # =========================================================
+            # ШАГ 9: Генерация промпта для обложки
+            # =========================================================
+            logger.info("[Orchestrator] Step 9: Image prompt generation...")
+            step_start = time.time()
+
+            try:
+                prompt_result = self.image_prompt.generate_prompt(
+                    title=article.editorial_title or article.title,
+                    content=article.editorial_rewritten or article.content or "",
+                    tags=article.tags or [],
+                )
+
+                # Сохраняем промпт в metadata
+                metadata = getattr(article, 'metadata', {}) or {}
+                metadata['image_prompt'] = prompt_result.prompt
+                metadata['image_prompt_success'] = prompt_result.success
+                article.metadata = metadata
+
+                step_time = time.time() - step_start
+                stats.model_attempts.append(ModelAttempt(
+                    model_id=self.image_prompt.model if hasattr(self.image_prompt, 'model') else 'image_prompt',
+                    success=True,
+                    response_time=step_time
+                ))
+
+                logger.info(f"[Orchestrator] Image prompt: {len(prompt_result.prompt)} chars")
+
+            except Exception as e:
+                logger.warning(f"[Orchestrator] Image prompt failed: {e}")
+
+            # =========================================================
+            # ШАГ 10: Трансформация изображений
+            # =========================================================
+            # logger.info("[Orchestrator] Step 10: Image transformation...")
+            # step_start = time.time()
+            #
+            # try:
+            #     images = getattr(article, 'images', []) or []
+            #     if images:
+            #         transform_result = self.image_transform.transform_images(images)
+            #
+            #         if transform_result.success_count > 0:
+            #             article.images = transform_result.transformed_urls
+            #             logger.info(
+            #                 f"[Orchestrator] Images: {transform_result.success_count}/"
+            #                 f"{len(images)} transformed"
+            #             )
+            #         else:
+            #             logger.warning("[Orchestrator] Images: no transforms succeeded, keeping originals")
+            #     else:
+            #         logger.info("[Orchestrator] Images: нет изображений, пропуск")
+            #
+            #     step_time = time.time() - step_start
+            #
+            # except Exception as e:
+            #     logger.warning(f"[Orchestrator] Image transformation failed: {e}")
 
             # =========================================================
             # Завершение
