@@ -54,3 +54,6 @@ langchain-google-genai
 langchain-groq
 
 telegraph
+# Image processing
+numpy
+Pillow
