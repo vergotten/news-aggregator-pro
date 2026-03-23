@@ -5,8 +5,20 @@
     <description>Curated tech news from Habr and more</description>
     <link>https://github.com</link>
     <language>ru</language>
-    <lastBuildDate>Sun, 22 Mar 2026 13:07:52 +0000</lastBuildDate>
+    <lastBuildDate>Mon, 23 Mar 2026 13:25:32 +0000</lastBuildDate>
     <generator>news-aggregator-pro/generate_rss.py</generator>
+    <item>
+      <title>Переход от трансформеров: использование LLM для создания ИИ-агентов</title>
+      <link>https://telegra.ph/Perehod-ot-transformerov-ispolzovanie-LLM-dlya-sozdaniya-II-agentov-03-23</link>
+      <guid isPermaLink="false">1e0ff730-8956-44ce-9122-e900e33d7512</guid>
+      <description>Индустрия ИИ столкнулась с пределами трансформерной архитектуры. Модели достигли локального максимума, требующего новых подходов.</description>
+      <pubDate>Sat, 21 Mar 2026 07:36:44 +0000</pubDate>
+      <category>Big Data</category>
+      <category>Data Engineering</category>
+      <category>DIY или Сделай сам</category>
+      <category>Habr</category>
+      <category>Natural Language Processing</category>
+    </item>
     <item>
       <title>Запуск Open-Sora с 15 ГБ VRAM: Трюки с reverse-engineering и monkey-patching</title>
       <link>https://telegra.ph/Zapusk-Open-Sora-s-15-GB-VRAM-Tryuki-s-reverse-engineering-i-monkey-patching-03-22</link>
@@ -49,13 +61,6 @@
       <category>Блог компании МТС</category>
       <category>Космонавтика</category>
       <category>Будущее здесь</category>
-    </item>
-    <item>
-      <title>Как я в одиночку начинаю IoT-стартап на Rust в Бразилии</title>
-      <link>https://telegra.ph/Kak-ya-v-odinochku-nachinayu-IoT-startap-na-Rust-v-Brazilii-03-20</link>
-      <guid isPermaLink="false">b28dbc9b-2181-4fa9-bd16-11dc1fa7f3a8</guid>
-      <pubDate>Sun, 15 Mar 2026 03:08:09 +0000</pubDate>
-      <category>Rust</category>
     </item>
     <item>
       <title>От франчайзи 1С к аутстаффингу</title>
@@ -203,13 +208,6 @@
       <description>Автоматизация производства сопровождается не только техническими, но и социальными вызовами. Внедрение ИИ требует убеждения сотрудников и руководства в его преимуществах.</description>
       <pubDate>Sun, 15 Mar 2026 04:48:38 +0000</pubDate>
       <category>Промышленное программирование</category>
-    </item>
-    <item>
-      <title>Стандарт решения проблемы двойных списаний в финтех</title>
-      <link>https://telegra.ph/Standart-resheniya-problemy-dvojnyh-spisanij-v-finteh-03-18</link>
-      <guid isPermaLink="false">31890268-6672-40b7-afd8-9b1acdbe942b</guid>
-      <pubDate>Sun, 15 Mar 2026 05:45:34 +0000</pubDate>
-      <category>Микросервисы</category>
     </item>
     <item>
       <title>Планировщик задач: стать своим собственным шедулером</title>
