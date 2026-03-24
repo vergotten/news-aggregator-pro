@@ -5,8 +5,20 @@
     <description>Curated tech news from Habr and more</description>
     <link>https://github.com</link>
     <language>ru</language>
-    <lastBuildDate>Mon, 23 Mar 2026 13:25:32 +0000</lastBuildDate>
+    <lastBuildDate>Tue, 24 Mar 2026 13:41:12 +0000</lastBuildDate>
     <generator>news-aggregator-pro/generate_rss.py</generator>
+    <item>
+      <title>Освоение Data, ML, CV и NLP: актуальные специальности и фундаментальная база</title>
+      <link>https://telegra.ph/Osvoenie-Data-ML-CV-i-NLP-aktualnye-specialnosti-i-fundamentalnaya-baza-03-24</link>
+      <guid isPermaLink="false">e05d88c6-5dce-49eb-bf9d-745a2dcaf525</guid>
+      <description>Освоение актуальных для рынка специальностей Data, ML, CV и NLP требует сочетания теоретической базы и практического опыта. Программа онлайн-магистратуры НИЯУ МИФИ в партнерстве с Яндекс Практикумом предлагает пошаговое погружение в технологии и индивидуальные траектории обучения.</description>
+      <pubDate>Sat, 21 Mar 2026 07:36:18 +0000</pubDate>
+      <category>Блог компании Яндекс Практикум</category>
+      <category>Искусственный интеллект</category>
+      <category>Анализ и проектирование систем</category>
+      <category>Машинное обучение</category>
+      <category>Учебный процесс в IT</category>
+    </item>
     <item>
       <title>Переход от трансформеров: использование LLM для создания ИИ-агентов</title>
       <link>https://telegra.ph/Perehod-ot-transformerov-ispolzovanie-LLM-dlya-sozdaniya-II-agentov-03-23</link>
@@ -90,16 +102,6 @@
       <category>TypeScript</category>
       <category>Веб-разработка</category>
       <category>CRM-системы</category>
-    </item>
-    <item>
-      <title>41 034 метода, 2 170 файлов: организуем кодовое знание за пределы одного человека</title>
-      <link>https://telegra.ph/41-034-metoda-2-170-fajlov-organizuem-kodovoe-znanie-za-predely-odnogo-cheloveka-03-20</link>
-      <guid isPermaLink="false">c226e4a1-673b-4560-a05b-cc23ceeed9d6</guid>
-      <description>Проект с 12 093 методами и 1183 файлами Python стал примером отсутствия документации. Новый подход использует граф свойств кода для быстрого понимания сложных сценариев.</description>
-      <pubDate>Thu, 19 Mar 2026 07:37:02 +0000</pubDate>
-      <category>Качество кода</category>
-      <category>Программирование</category>
-      <category>Развитие стартапа</category>
     </item>
     <item>
       <title>Kling Motion Control 3.0 Pro: Новая нейросеть для переноса движений в России</title>
