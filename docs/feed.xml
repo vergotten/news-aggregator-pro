@@ -5,8 +5,19 @@
     <description>Curated tech news from Habr and more</description>
     <link>https://github.com</link>
     <language>ru</language>
-    <lastBuildDate>Tue, 24 Mar 2026 13:41:12 +0000</lastBuildDate>
+    <lastBuildDate>Wed, 25 Mar 2026 13:40:35 +0000</lastBuildDate>
     <generator>news-aggregator-pro/generate_rss.py</generator>
+    <item>
+      <title>Структуры данных: Хэш-таблицы и управление конфликтами кэша</title>
+      <link>https://telegra.ph/Struktury-dannyh-Hehsh-tablicy-i-upravlenie-konfliktami-kehsha-03-25</link>
+      <guid isPermaLink="false">58c0030e-a4fd-49fa-bdb1-29b5a0d91fc6</guid>
+      <description>Миф о константном времени поиска в хэш-таблицах развенчан на практике. Конфликты кэша привели к замедлению.</description>
+      <pubDate>Sat, 21 Mar 2026 07:25:38 +0000</pubDate>
+      <category>Программирование микроконтроллеров</category>
+      <category>Программирование</category>
+      <category>Клиентская оптимизация</category>
+      <category>Процессоры</category>
+    </item>
     <item>
       <title>Освоение Data, ML, CV и NLP: актуальные специальности и фундаментальная база</title>
       <link>https://telegra.ph/Osvoenie-Data-ML-CV-i-NLP-aktualnye-specialnosti-i-fundamentalnaya-baza-03-24</link>
@@ -58,38 +69,11 @@
       <category>Open source</category>
     </item>
     <item>
-      <title>Что сейчас происходит с рынком ИТ-специалистов</title>
-      <link>https://telegra.ph/CHto-sejchas-proishodit-s-rynkom-IT-specialistov-03-20</link>
-      <guid isPermaLink="false">5572ec59-4615-4383-99b9-d1ec5ff76c02</guid>
-      <pubDate>Tue, 17 Mar 2026 07:57:19 +0000</pubDate>
-      <category>Карьера в IT-индустрии</category>
-      <category>Открытые данные</category>
-    </item>
-    <item>
-      <title>Космос-2055: как будет выглядеть космонавтика через 30 лет?</title>
-      <link>https://telegra.ph/Kosmos-2055-kak-budet-vyglyadet-kosmonavtika-cherez-30-let-03-20</link>
-      <guid isPermaLink="false">2e968a2d-0947-4c76-9407-d4a0fe042c37</guid>
-      <pubDate>Tue, 17 Mar 2026 08:00:13 +0000</pubDate>
-      <category>Блог компании МТС</category>
-      <category>Космонавтика</category>
-      <category>Будущее здесь</category>
-    </item>
-    <item>
       <title>От франчайзи 1С к аутстаффингу</title>
       <link>https://telegra.ph/Ot-franchajzi-1S-k-autstaffingu-03-20</link>
       <guid isPermaLink="false">874cb22e-2b0a-4c82-9bb6-b78086ebbfae</guid>
       <pubDate>Thu, 19 Mar 2026 07:48:10 +0000</pubDate>
       <category>1С</category>
-    </item>
-    <item>
-      <title>Пси-словарь для айтишников v1.0: Документация к человеческим отношениям для инженеров</title>
-      <link>https://telegra.ph/Psi-slovar-dlya-ajtishnikov-v10-Dokumentaciya-k-chelovecheskim-otnosheniyam-dlya-inzhenerov-03-20</link>
-      <guid isPermaLink="false">c5e6296e-96ab-49f0-b542-bd0f8d12f0c0</guid>
-      <pubDate>Tue, 17 Mar 2026 08:00:04 +0000</pubDate>
-      <category>Здоровье</category>
-      <category>Лайфхаки для гиков</category>
-      <category>Мозг</category>
-      <category>Читальный зал</category>
     </item>
     <item>
       <title>Написание 46K строк на Claude Code: практические рекомендации</title>
