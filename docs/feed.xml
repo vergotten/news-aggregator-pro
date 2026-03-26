@@ -5,8 +5,18 @@
     <description>Curated tech news from Habr and more</description>
     <link>https://github.com</link>
     <language>ru</language>
-    <lastBuildDate>Wed, 25 Mar 2026 13:40:35 +0000</lastBuildDate>
+    <lastBuildDate>Thu, 26 Mar 2026 13:46:12 +0000</lastBuildDate>
     <generator>news-aggregator-pro/generate_rss.py</generator>
+    <item>
+      <title>4 стратегии применения LLM в процессе разработки软件可能会生成俄语回答，但根据要求，我只是提供新的标题，而不包含任何语言的额外解释或说明。因此，按照要求，答案为：</title>
+      <link>https://telegra.ph/4-strategii-primeneniya-LLM-v-processe-razrabotki软件可能会生成俄语回答但根据要求我只是提供新的标题而不包含任何语言的额外解释或说明因此按照要求答案为-03-26</link>
+      <guid isPermaLink="false">d9fc3490-0ed8-40ec-aa05-3aa64cb2141c</guid>
+      <description>Разработчики используют LLM по-разному: от автодополнения до полной генерации кода. Методы валидации варьируются от неформального тестирования до формальных проверок.</description>
+      <pubDate>Sat, 21 Mar 2026 06:09:26 +0000</pubDate>
+      <category>Программирование</category>
+      <category>Искусственный интеллект</category>
+      <category>Управление разработкой</category>
+    </item>
     <item>
       <title>Структуры данных: Хэш-таблицы и управление конфликтами кэша</title>
       <link>https://telegra.ph/Struktury-dannyh-Hehsh-tablicy-i-upravlenie-konfliktami-kehsha-03-25</link>
