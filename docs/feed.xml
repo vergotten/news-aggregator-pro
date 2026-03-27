@@ -5,8 +5,20 @@
     <description>Curated tech news from Habr and more</description>
     <link>https://github.com</link>
     <language>ru</language>
-    <lastBuildDate>Thu, 26 Mar 2026 13:46:12 +0000</lastBuildDate>
+    <lastBuildDate>Fri, 27 Mar 2026 13:23:19 +0000</lastBuildDate>
     <generator>news-aggregator-pro/generate_rss.py</generator>
+    <item>
+      <title>Тест для специалиста: каким типом данных хранить номер паспорта?</title>
+      <link>https://telegra.ph/Test-dlya-specialista-kakim-tipom-dannyh-hranit-nomer-pasporta-03-27</link>
+      <guid isPermaLink="false">f2b0f074-0500-4d6d-8b3e-34b572751c43</guid>
+      <description>Простой вопрос о типе данных для хранения номера паспорта в SQL базе разделяет опытных инженеров и менее подготовленных кандидатов.</description>
+      <pubDate>Sat, 21 Mar 2026 08:27:28 +0000</pubDate>
+      <category>Базы данных</category>
+      <category>Проектирование и рефакторинг</category>
+      <category>Карьера в IT-индустрии</category>
+      <category>Качество кода</category>
+      <category>SQL</category>
+    </item>
     <item>
       <title>4 стратегии применения LLM в процессе разработки软件可能会生成俄语回答，但根据要求，我只是提供新的标题，而不包含任何语言的额外解释或说明。因此，按照要求，答案为：</title>
       <link>https://telegra.ph/4-strategii-primeneniya-LLM-v-processe-razrabotki软件可能会生成俄语回答但根据要求我只是提供新的标题而不包含任何语言的额外解释或说明因此按照要求答案为-03-26</link>
@@ -77,13 +89,6 @@
       <description>проблемы с использованием локальных ИИ-агентов для управления проектами и создание CLI-инструмента для защиты структуры задач.</description>
       <pubDate>Fri, 20 Mar 2026 19:13:56 +0000</pubDate>
       <category>Open source</category>
-    </item>
-    <item>
-      <title>От франчайзи 1С к аутстаффингу</title>
-      <link>https://telegra.ph/Ot-franchajzi-1S-k-autstaffingu-03-20</link>
-      <guid isPermaLink="false">874cb22e-2b0a-4c82-9bb6-b78086ebbfae</guid>
-      <pubDate>Thu, 19 Mar 2026 07:48:10 +0000</pubDate>
-      <category>1С</category>
     </item>
     <item>
       <title>Написание 46K строк на Claude Code: практические рекомендации</title>
