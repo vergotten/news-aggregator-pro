@@ -346,6 +346,19 @@
                 <div class="tab-panel" id="tab-telegraph">
                     <label>Telegraph Content HTML</label>
                     <textarea name="telegraph_content_html" class="xtall">{{ article.telegraph_content_html or '' }}</textarea>
+                    {% if article.telegraph_url %}
+                    <div style="margin-top:12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                        <button type="button" id="sync-tg-btn" onclick="syncTelegraph()"
+                            style="background:var(--accent-dim);border:1px solid rgba(74,222,128,0.3);color:var(--accent);font-family:var(--mono);font-size:0.8rem;padding:8px 16px;border-radius:6px;cursor:pointer;">
+                            ↑ Обновить Telegraph
+                        </button>
+                        <span id="sync-tg-status" style="font-family:var(--mono);font-size:0.78rem;color:var(--text-sec)"></span>
+                    </div>
+                    {% else %}
+                    <p style="margin-top:10px;font-family:var(--mono);font-size:0.75rem;color:var(--text-sec)">
+                        ⚠ Статья ещё не опубликована на Telegraph
+                    </p>
+                    {% endif %}
                 </div>
                 <div class="tab-panel" id="tab-telegram">
                     <label>Telegram Post Text (HTML)</label>
@@ -488,6 +501,31 @@
             document.getElementById('edit-form').submit();
         }
     });
+
+    // ── Sync Telegraph ──
+    async function syncTelegraph() {
+        const btn = document.getElementById('sync-tg-btn');
+        const status = document.getElementById('sync-tg-status');
+        btn.disabled = true;
+        btn.textContent = 'Обновляем...';
+        status.textContent = '';
+        try {
+            const resp = await fetch('/admin/article/{{ article.id }}/sync-telegraph', { method: 'POST' });
+            const data = await resp.json();
+            if (resp.ok && data.ok) {
+                status.style.color = 'var(--accent)';
+                status.textContent = '✓ Telegraph обновлён';
+            } else {
+                status.style.color = 'var(--red)';
+                status.textContent = '✗ ' + (data.detail || 'Ошибка');
+            }
+        } catch(e) {
+            status.style.color = 'var(--red)';
+            status.textContent = '✗ Ошибка сети';
+        }
+        btn.disabled = false;
+        btn.textContent = '↑ Обновить Telegraph';
+    }
     </script>
 </body>
 </html>

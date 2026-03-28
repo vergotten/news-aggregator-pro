@@ -311,3 +311,93 @@ async def article_save(
 
     update_article(article_id, data)
     return RedirectResponse(url=f"/admin/article/{article_id}?saved=1", status_code=303)
+
+
+# =================================================================
+# Telegraph sync endpoint
+# =================================================================
+
+TELEGRAPH_API = "https://api.telegra.ph"
+
+
+def telegraph_edit_page(token: str, path: str, title: str, content_nodes: list) -> dict:
+    """Обновить существующую страницу на Telegraph через editPage API."""
+    import requests as _requests
+    import json as _json
+    resp = _requests.post(f"{TELEGRAPH_API}/editPage/{path}", data={
+        "access_token": token,
+        "title": title[:256],
+        "content": _json.dumps(content_nodes, ensure_ascii=False),
+        "return_content": "false",
+    })
+    resp.raise_for_status()
+    return resp.json()
+
+
+def content_to_nodes_simple(content: str) -> list:
+    """Простая конвертация текста в Telegraph nodes для editPage."""
+    import re as _re
+    if not content:
+        return [{"tag": "p", "children": ["Контент отсутствует"]}]
+    nodes = []
+    for para in content.split("\n\n"):
+        para = para.strip()
+        if not para:
+            continue
+        # Заголовки markdown
+        m = _re.match(r'^#{1,4}\s+(.+)$', para)
+        if m:
+            nodes.append({"tag": "h4", "children": [m.group(1)]})
+            continue
+        # Короткая строка без точки → подзаголовок
+        if len(para) < 80 and "\n" not in para and not para.endswith("."):
+            nodes.append({"tag": "h4", "children": [para]})
+            continue
+        nodes.append({"tag": "p", "children": [para.replace("\n", " ")]})
+    return nodes or [{"tag": "p", "children": [content[:500]]}]
+
+
+@router.post("/article/{article_id}/sync-telegraph")
+async def sync_telegraph(request: Request, article_id: str):
+    """Обновить Telegraph страницу из текущего контента в БД."""
+    if not is_authenticated(request):
+        return RedirectResponse(url="/admin/login", status_code=303)
+
+    article = fetch_article(article_id)
+    if not article:
+        raise HTTPException(status_code=404, detail="Статья не найдена")
+
+    # Читаем токен из article_metadata
+    metadata = article.get("article_metadata") or {}
+    if isinstance(metadata, str):
+        try:
+            import json as _json
+            metadata = _json.loads(metadata)
+        except Exception:
+            metadata = {}
+
+    token = metadata.get("telegraph_access_token")
+    if not token:
+        raise HTTPException(
+            status_code=400,
+            detail="Telegraph токен не найден в metadata. Статья должна быть опубликована через publish_pending.py хотя бы один раз после этого обновления."
+        )
+
+    # Достаём path из telegraph_url (https://telegra.ph/slug-01-01 → slug-01-01)
+    telegraph_url = article.get("telegraph_url") or ""
+    if not telegraph_url:
+        raise HTTPException(status_code=400, detail="telegraph_url не задан")
+
+    path = telegraph_url.rstrip("/").split("/")[-1]
+
+    # Контент
+    content = article.get("telegraph_content_html") or article.get("editorial_rewritten") or ""
+    title = article.get("editorial_title") or article.get("title") or "Без заголовка"
+    nodes = content_to_nodes_simple(content)
+
+    result = telegraph_edit_page(token, path, title, nodes)
+
+    if result.get("ok"):
+        return {"ok": True, "url": result["result"].get("url")}
+    else:
+        raise HTTPException(status_code=500, detail=f"Telegraph error: {result.get('error')}")

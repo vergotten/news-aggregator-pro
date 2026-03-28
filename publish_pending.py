@@ -105,21 +105,41 @@ def get_pending_articles(min_score: int = 7, limit: int = 20) -> List[Dict]:
     return [dict(a) for a in articles]
 
 
-def update_article_published(article_id: str, telegraph_url: str, telegram_msg_id: Optional[int] = None):
-    """Обновить статью после публикации."""
+def update_article_published(article_id: str, telegraph_url: str,
+                             telegram_msg_id: Optional[int] = None,
+                             telegraph_token: Optional[str] = None):
+    """Обновить статью после публикации. Сохраняем токен в article_metadata."""
     conn = psycopg2.connect(get_db_url())
-    cur = conn.cursor()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-    cur.execute("""
+    # Читаем текущий metadata
+    cur.execute("SELECT article_metadata FROM articles WHERE id = %s", (str(article_id),))
+    row = cur.fetchone()
+    metadata = {}
+    if row and row["article_metadata"]:
+        try:
+            metadata = json.loads(row["article_metadata"]) if isinstance(row["article_metadata"], str) else dict(row["article_metadata"])
+        except Exception:
+            metadata = {}
+
+    # Сохраняем токен в metadata
+    if telegraph_token:
+        metadata["telegraph_access_token"] = telegraph_token
+
+    cur2 = conn.cursor()
+    cur2.execute("""
         UPDATE articles SET
             telegraph_url = %s,
             status = 'published',
+            article_metadata = %s,
             updated_at = %s
         WHERE id = %s
-    """, (telegraph_url, datetime.now(timezone.utc), str(article_id)))
+    """, (telegraph_url, json.dumps(metadata, ensure_ascii=False),
+          datetime.now(timezone.utc), str(article_id)))
 
     conn.commit()
     cur.close()
+    cur2.close()
     conn.close()
 
 
@@ -197,10 +217,10 @@ def telegraph_publish(title: str, content: str, images: List[str] = None,
     if result.get("ok"):
         url = result["result"].get("url")
         logger.info(f"Telegraph: {url}")
-        return url
+        return url, _telegraph_token
     else:
         logger.error(f"Telegraph error: {result.get('error', 'unknown')}")
-        return None
+        return None, None
 
 
 def content_to_telegraph_nodes(content: str, images: List[str] = None) -> List[Dict]:
@@ -495,7 +515,7 @@ async def publish_articles(
                 except Exception:
                     t_images = []
 
-            telegraph_url = telegraph_publish(
+            telegraph_url, telegraph_token = telegraph_publish(
                 title=title,
                 content=t_content,
                 images=t_images,
@@ -532,6 +552,7 @@ async def publish_articles(
                 article_id=article["id"],
                 telegraph_url=telegraph_url,
                 telegram_msg_id=msg_id,
+                telegraph_token=telegraph_token,
             )
             published += 1
             logger.info(f"  ✅ Опубликовано")
