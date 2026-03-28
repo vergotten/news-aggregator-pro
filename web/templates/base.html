@@ -124,6 +124,12 @@
             <nav>
                 <a href="/">Статьи</a>
                 <a href="https://t.me/neurokotd" target="_blank">Telegram</a>
+                {% if is_admin %}
+                <a href="/admin">Админ</a>
+                <a href="/admin/logout">Выход</a>
+                {% else %}
+                <a href="/admin/login">Вход</a>
+                {% endif %}
             </nav>
         </div>
     </header>

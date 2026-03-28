@@ -9,8 +9,10 @@ web/app.py — FastAPI блог + RSS для Дзена
   /feed/rss.xml        — обычный RSS
   /robots.txt          — для роботов
   /api/articles        — JSON API (для админки)
+  /admin               — панель администратора
 
-Читает статьи из Supabase.
+Работает с любой PostgreSQL: Supabase (облако) или локальная.
+Просто укажи нужный DATABASE_URL в .env.
 """
 
 import os
@@ -27,40 +29,57 @@ import psycopg2
 import psycopg2.extras
 
 # =================================================================
-# Конфигурация
+# Загрузка .env  (ищем сначала рядом с app.py, потом на уровень выше)
 # =================================================================
 
-SITE_TITLE = "НейроКотΔ"
-SITE_DESCRIPTION = "Технические статьи с AI-обработкой"
-SITE_URL = os.getenv("SITE_URL", "http://localhost:8080")
-SITE_LANGUAGE = "ru"
-
-# Загрузка .env
-for env_path in [
+for _env_path in [
     os.path.join(os.path.dirname(__file__), ".env"),
     os.path.join(os.path.dirname(__file__), "..", ".env"),
 ]:
-    if os.path.exists(env_path):
-        with open(env_path) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, _, value = line.partition("=")
-                    key = key.strip()
-                    value = value.strip().strip('"').strip("'")
-                    if key and value:
-                        os.environ.setdefault(key, value)
+    if os.path.exists(_env_path):
+        with open(_env_path) as _f:
+            for _line in _f:
+                _line = _line.strip()
+                if _line and not _line.startswith("#") and "=" in _line:
+                    _key, _, _value = _line.partition("=")
+                    _key = _key.strip()
+                    _value = _value.strip().strip('"').strip("'")
+                    if _key and _value:
+                        os.environ.setdefault(_key, _value)
         break
 
+# =================================================================
+# Конфигурация
+# =================================================================
 
-def get_db_url():
-    return os.getenv("DATABASE_URL") or os.getenv("DATABASE_URL", "")
+SITE_TITLE       = "НейроКотΔ"
+SITE_DESCRIPTION = "Технические статьи с AI-обработкой"
+SITE_URL         = os.getenv("SITE_URL", "http://localhost:8080")
+SITE_LANGUAGE    = "ru"
+
+# =================================================================
+# База данных
+#
+# Работает с любым PostgreSQL:
+#   Supabase:  DATABASE_URL=postgresql://postgres.xxx:PASS@aws-...pooler.supabase.com:6543/postgres
+#   Локальная: DATABASE_URL=postgresql://user:pass@localhost:5432/news_aggregator
+#   Docker:    DATABASE_URL=postgresql://newsaggregator:changeme123@postgres:5432/news_aggregator
+# =================================================================
+
+def get_db_url() -> str:
+    return os.getenv("DATABASE_URL", "")
 
 
 def get_conn():
     url = get_db_url()
     if not url:
-        raise RuntimeError("DATABASE_URL не задан")
+        raise RuntimeError(
+            "DATABASE_URL не задан. "
+            "Добавь в .env строку вида:\n"
+            "  DATABASE_URL=postgresql://user:pass@localhost:5432/dbname\n"
+            "или для Supabase:\n"
+            "  DATABASE_URL=postgresql://postgres.xxx:PASS@aws-...supabase.com:6543/postgres"
+        )
     return psycopg2.connect(url)
 
 
@@ -70,9 +89,21 @@ def get_conn():
 
 app = FastAPI(title=SITE_TITLE, docs_url="/api/docs")
 
+# Подключаем админ-панель СРАЗУ после создания app
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from admin_routes import router as admin_router  # noqa: E402
+app.include_router(admin_router)
+
 # Шаблоны и статика
-templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
-app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
+templates = Jinja2Templates(
+    directory=os.path.join(os.path.dirname(__file__), "templates")
+)
+app.mount(
+    "/static",
+    StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")),
+    name="static",
+)
 
 
 # =================================================================
@@ -82,7 +113,6 @@ app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__
 def make_slug(title: str) -> str:
     """Создать ЧПУ slug из заголовка."""
     slug = title.lower().strip()
-    # Транслитерация кириллицы
     translit = {
         'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'yo',
         'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'j', 'к': 'k', 'л': 'l', 'м': 'm',
@@ -98,33 +128,22 @@ def make_slug(title: str) -> str:
             result += char
         elif char in (' ', '-', '_'):
             result += '-'
-    # Убираем множественные дефисы
     result = re.sub(r'-+', '-', result).strip('-')
     return result[:80]
 
 
 def markdown_to_html(text: str) -> str:
-    """Простая конвертация markdown → HTML для отображения на сайте."""
+    """Простая конвертация markdown → HTML."""
     if not text:
         return ""
-
-    # Code blocks
     text = re.sub(r'```(\w*)\n(.*?)```', r'<pre><code>\2</code></pre>', text, flags=re.DOTALL)
-
-    # Headings
     text = re.sub(r'^#### (.+)$', r'<h4>\1</h4>', text, flags=re.MULTILINE)
-    text = re.sub(r'^### (.+)$', r'<h3>\1</h3>', text, flags=re.MULTILINE)
-    text = re.sub(r'^## (.+)$', r'<h2>\1</h2>', text, flags=re.MULTILINE)
-
-    # Bold, italic, inline code
+    text = re.sub(r'^### (.+)$',  r'<h3>\1</h3>', text, flags=re.MULTILINE)
+    text = re.sub(r'^## (.+)$',   r'<h2>\1</h2>', text, flags=re.MULTILINE)
     text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
     text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<em>\1</em>', text)
     text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
-
-    # Links
     text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', text)
-
-    # Lists
     lines = text.split('\n')
     in_list = False
     result = []
@@ -144,8 +163,6 @@ def markdown_to_html(text: str) -> str:
     if in_list:
         result.append('</ul>')
     text = '\n'.join(result)
-
-    # Paragraphs
     paragraphs = text.split('\n\n')
     processed = []
     for p in paragraphs:
@@ -157,12 +174,11 @@ def markdown_to_html(text: str) -> str:
         else:
             p = p.replace('\n', '<br>')
             processed.append(f'<p>{p}</p>')
-
     return '\n'.join(processed)
 
 
 def get_articles(status: str = "published", limit: int = 20) -> List[dict]:
-    """Получить статьи из Supabase."""
+    """Получить статьи из БД."""
     c = get_conn()
     cur = c.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("""
@@ -186,9 +202,11 @@ def get_articles(status: str = "published", limit: int = 20) -> List[dict]:
         r['display_title'] = title
         r['slug'] = make_slug(title)
         r['teaser'] = r.get('editorial_teaser') or ''
-        r['cover_image'] = r.get('telegram_cover_image') or (r.get('images') or [''])[0] if r.get('images') else ''
+        r['cover_image'] = (
+            r.get('telegram_cover_image')
+            or ((r.get('images') or [''])[0] if r.get('images') else '')
+        )
         articles.append(r)
-
     return articles
 
 
@@ -202,98 +220,82 @@ def get_article_by_slug(slug: str) -> Optional[dict]:
 
 
 # =================================================================
+# Хелпер: передаём в шаблоны флаг is_admin для nav-кнопки
+# =================================================================
+
+SESSION_COOKIE = "admin_session"
+
+def _is_admin(request: Request) -> bool:
+    """Проверить наличие валидной сессии (для nav-кнопки)."""
+    try:
+        from admin_routes import verify_session_token
+        token = request.cookies.get(SESSION_COOKIE, "")
+        return bool(token) and verify_session_token(token)
+    except Exception:
+        return False
+
+
+# =================================================================
 # Роуты — HTML страницы
 # =================================================================
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    """Главная страница — список статей."""
     try:
         articles = get_articles(limit=20)
-    except Exception as e:
+    except Exception:
         articles = []
     return templates.TemplateResponse("index.html", {
-        "request": request,
-        "articles": articles,
+        "request":    request,
+        "articles":   articles,
         "site_title": SITE_TITLE,
-        "site_url": SITE_URL,
+        "site_url":   SITE_URL,
+        "is_admin":   _is_admin(request),
     })
 
 
 @app.get("/article/{slug}", response_class=HTMLResponse)
 async def article_page(request: Request, slug: str):
-    """Страница статьи."""
     article = get_article_by_slug(slug)
     if not article:
         raise HTTPException(status_code=404, detail="Статья не найдена")
-
-    # Контент: telegraph_content_html (markdown) → HTML
-    content_md = article.get('telegraph_content_html') or article.get('editorial_rewritten') or ''
+    content_md   = article.get('telegraph_content_html') or article.get('editorial_rewritten') or ''
     content_html = markdown_to_html(content_md)
-
     return templates.TemplateResponse("article.html", {
-        "request": request,
-        "article": article,
+        "request":      request,
+        "article":      article,
         "content_html": content_html,
-        "site_title": SITE_TITLE,
-        "site_url": SITE_URL,
+        "site_title":   SITE_TITLE,
+        "site_url":     SITE_URL,
+        "is_admin":     _is_admin(request),
     })
 
 
 # =================================================================
-# RSS для Дзена
+# RSS
 # =================================================================
 
 @app.get("/feed/dzen.xml")
 async def dzen_rss():
-    """RSS лента в формате Дзена."""
     articles = get_articles(limit=50)
-
     items = []
     for a in articles:
-        title = a['display_title']
-        slug = a['slug']
+        title       = a['display_title']
+        slug        = a['slug']
         article_url = f"{SITE_URL}/article/{slug}"
-        teaser = a.get('teaser') or ''
-        author = a.get('author') or 'AI Digest'
-
-        # Полный текст в HTML
-        content_md = a.get('telegraph_content_html') or a.get('editorial_rewritten') or ''
+        teaser      = a.get('teaser') or ''
+        author      = a.get('author') or 'AI Digest'
+        content_md  = a.get('telegraph_content_html') or a.get('editorial_rewritten') or ''
         content_html = markdown_to_html(content_md)
-        content_escaped = html.escape(content_html)
-
-        # Обложка
-        cover = a.get('cover_image') or ''
-        enclosure = ""
-        if cover:
-            enclosure = f'<enclosure url="{html.escape(cover)}" type="image/jpeg"/>'
-
-        # Дата
-        pub_date = a.get('published_at') or a.get('updated_at') or a.get('created_at')
-        if pub_date:
-            if hasattr(pub_date, 'strftime'):
-                pub_date_str = pub_date.strftime('%a, %d %b %Y %H:%M:%S +0300')
-            else:
-                pub_date_str = str(pub_date)
-        else:
-            pub_date_str = datetime.now().strftime('%a, %d %b %Y %H:%M:%S +0300')
-
-        # Категории
-        categories = ""
-        categories += "<category>format-article</category>\n"
-
-        # Tags
-        tags = a.get('tags') or []
-        if isinstance(tags, str):
-            try:
-                import json
-                tags = json.loads(tags)
-            except Exception:
-                tags = []
-
+        cover       = a.get('cover_image') or ''
+        enclosure   = f'<enclosure url="{html.escape(cover)}" type="image/jpeg"/>' if cover else ''
+        pub_date    = a.get('published_at') or a.get('updated_at') or a.get('created_at')
+        pub_date_str = (
+            pub_date.strftime('%a, %d %b %Y %H:%M:%S +0300')
+            if hasattr(pub_date, 'strftime') else str(pub_date or '')
+        ) or datetime.now().strftime('%a, %d %b %Y %H:%M:%S +0300')
         guid = str(a.get('id') or slug)
-
-        item = f"""    <item>
+        items.append(f"""    <item>
       <title>{html.escape(title)}</title>
       <link>{article_url}</link>
       <guid>{guid}</guid>
@@ -301,11 +303,9 @@ async def dzen_rss():
       <author>{html.escape(author)}</author>
       <description>{html.escape(teaser[:500])}</description>
       {enclosure}
-      {categories}
+      <category>format-article</category>
       <content:encoded><![CDATA[{content_html}]]></content:encoded>
-    </item>"""
-        items.append(item)
-
+    </item>""")
     rss = f"""<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0"
   xmlns:content="http://purl.org/rss/1.0/modules/content/"
@@ -321,36 +321,29 @@ async def dzen_rss():
 {"".join(items)}
   </channel>
 </rss>"""
-
     return Response(content=rss, media_type="application/rss+xml; charset=utf-8")
 
 
 @app.get("/feed/rss.xml")
 async def standard_rss():
-    """Обычный RSS (для Feedly и т.д.)."""
     articles = get_articles(limit=50)
-
     items = []
     for a in articles:
-        title = a['display_title']
-        slug = a['slug']
-        article_url = f"{SITE_URL}/article/{slug}"
-        teaser = a.get('teaser') or ''
-        pub_date = a.get('updated_at') or a.get('created_at') or datetime.now()
-        if hasattr(pub_date, 'strftime'):
-            pub_date_str = pub_date.strftime('%a, %d %b %Y %H:%M:%S +0300')
-        else:
-            pub_date_str = str(pub_date)
-
-        item = f"""    <item>
+        title       = a['display_title']
+        article_url = f"{SITE_URL}/article/{a['slug']}"
+        teaser      = a.get('teaser') or ''
+        pub_date    = a.get('updated_at') or a.get('created_at') or datetime.now()
+        pub_date_str = (
+            pub_date.strftime('%a, %d %b %Y %H:%M:%S +0300')
+            if hasattr(pub_date, 'strftime') else str(pub_date)
+        )
+        items.append(f"""    <item>
       <title>{html.escape(title)}</title>
       <link>{article_url}</link>
-      <guid>{str(a.get('id', slug))}</guid>
+      <guid>{str(a.get('id', a['slug']))}</guid>
       <pubDate>{pub_date_str}</pubDate>
       <description>{html.escape(teaser[:500])}</description>
-    </item>"""
-        items.append(item)
-
+    </item>""")
     rss = f"""<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
   <channel>
@@ -361,7 +354,6 @@ async def standard_rss():
 {"".join(items)}
   </channel>
 </rss>"""
-
     return Response(content=rss, media_type="application/rss+xml; charset=utf-8")
 
 
@@ -381,12 +373,11 @@ Sitemap: {SITE_URL}/sitemap.xml
 
 
 # =================================================================
-# JSON API (для админки)
+# JSON API
 # =================================================================
 
 @app.get("/api/articles")
 async def api_articles(status: str = "published", limit: int = 20):
-    """JSON API для статей."""
     articles = get_articles(status=status, limit=limit)
     return {"count": len(articles), "articles": articles}
 

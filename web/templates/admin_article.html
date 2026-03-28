@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Редактор — Admin</title>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        :root {
+            --bg: #0d0d0f;
+            --surface: #141417;
+            --surface2: #1a1a1e;
+            --border: #242428;
+            --accent: #4ade80;
+            --accent-dim: rgba(74,222,128,0.1);
+            --text: #e8e8f0;
+            --text-sec: #6b6b7a;
+            --yellow: #fbbf24;
+            --blue: #60a5fa;
+            --red: #f87171;
+            --mono: 'IBM Plex Mono', monospace;
+            --sans: 'IBM Plex Sans', sans-serif;
+        }
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--sans);
+            font-size: 14px;
+            min-height: 100vh;
+        }
+
+        /* ── Topbar ── */
+        .topbar {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 0 24px;
+            height: 52px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .topbar-left { display: flex; align-items: center; gap: 16px; }
+        .back-link {
+            font-family: var(--mono);
+            font-size: 0.75rem;
+            color: var(--text-sec);
+            text-decoration: none;
+            padding: 5px 10px;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            transition: all 0.15s;
+        }
+        .back-link:hover { color: var(--text); border-color: var(--text-sec); }
+        .topbar-title {
+            font-family: var(--mono);
+            font-size: 0.78rem;
+            color: var(--text-sec);
+        }
+        .topbar-actions { display: flex; align-items: center; gap: 10px; }
+        .btn-save {
+            background: var(--accent);
+            color: #0d0d0f;
+            border: none;
+            font-family: var(--mono);
+            font-size: 0.8rem;
+            font-weight: 600;
+            padding: 8px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: opacity 0.15s;
+        }
+        .btn-save:hover { opacity: 0.88; }
+        .topbar-link {
+            font-family: var(--mono);
+            font-size: 0.75rem;
+            color: var(--text-sec);
+            text-decoration: none;
+            padding: 5px 10px;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            transition: all 0.15s;
+        }
+        .topbar-link:hover { color: var(--text); border-color: var(--text-sec); }
+
+        /* ── Toast ── */
+        .toast {
+            position: fixed;
+            top: 64px;
+            right: 24px;
+            background: rgba(74,222,128,0.15);
+            border: 1px solid rgba(74,222,128,0.4);
+            color: var(--accent);
+            font-family: var(--mono);
+            font-size: 0.8rem;
+            padding: 10px 18px;
+            border-radius: 6px;
+            z-index: 200;
+            animation: fadeout 3s forwards;
+        }
+        @keyframes fadeout {
+            0%,70% { opacity: 1; transform: translateY(0); }
+            100%    { opacity: 0; transform: translateY(-8px); }
+        }
+
+        /* ── Layout ── */
+        .page {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 28px 24px;
+            display: grid;
+            grid-template-columns: 1fr 320px;
+            gap: 20px;
+        }
+
+        /* ── Sections ── */
+        .section {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 16px;
+        }
+        .section-header {
+            background: var(--surface2);
+            border-bottom: 1px solid var(--border);
+            padding: 10px 18px;
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--text-sec);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .section-header .dot {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: var(--accent);
+        }
+        .section-body { padding: 18px; }
+
+        /* ── Fields ── */
+        .field { margin-bottom: 16px; }
+        .field:last-child { margin-bottom: 0; }
+        label {
+            display: block;
+            font-family: var(--mono);
+            font-size: 0.68rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-sec);
+            margin-bottom: 6px;
+        }
+        input[type="text"],
+        input[type="number"],
+        input[type="url"],
+        select,
+        textarea {
+            width: 100%;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-family: var(--mono);
+            font-size: 0.85rem;
+            padding: 9px 12px;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            resize: vertical;
+        }
+        input:focus, select:focus, textarea:focus {
+            border-color: rgba(74,222,128,0.5);
+            box-shadow: 0 0 0 2px rgba(74,222,128,0.08);
+        }
+        textarea.tall { min-height: 180px; }
+        textarea.xtall { min-height: 300px; }
+        textarea.short { min-height: 80px; }
+        select option { background: #1a1a1e; }
+
+        /* ── Sidebar ── */
+        .sidebar { }
+
+        .meta-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 18px;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.8rem;
+        }
+        .meta-row:last-child { border-bottom: none; }
+        .meta-key {
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            color: var(--text-sec);
+        }
+        .meta-val { color: var(--text); text-align: right; max-width: 180px; word-break: break-all; }
+
+        .status-select {
+            width: 100%;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: var(--mono);
+            font-size: 0.82rem;
+            padding: 8px 12px;
+            border-radius: 6px;
+            outline: none;
+            cursor: pointer;
+        }
+        .status-select:focus { border-color: rgba(74,222,128,0.5); }
+
+        .score-input {
+            width: 100%;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: var(--mono);
+            font-size: 0.9rem;
+            padding: 8px 12px;
+            border-radius: 6px;
+            outline: none;
+        }
+        .score-input:focus { border-color: rgba(74,222,128,0.5); }
+
+        .ext-link {
+            font-family: var(--mono);
+            font-size: 0.72rem;
+            color: var(--blue);
+            text-decoration: none;
+            display: inline-block;
+            padding: 4px 0;
+        }
+        .ext-link:hover { text-decoration: underline; }
+
+        /* ── Tab strip ── */
+        .tab-strip {
+            display: flex;
+            gap: 2px;
+            padding: 10px 18px 0;
+            background: var(--surface2);
+            border-bottom: 1px solid var(--border);
+        }
+        .tab-btn {
+            font-family: var(--mono);
+            font-size: 0.72rem;
+            letter-spacing: 0.05em;
+            padding: 6px 14px;
+            background: none;
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: var(--text-sec);
+            cursor: pointer;
+            transition: color 0.15s, border-color 0.15s;
+            margin-bottom: -1px;
+        }
+        .tab-btn:hover { color: var(--text); }
+        .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+        .tab-panel { display: none; padding: 18px; }
+        .tab-panel.active { display: block; }
+
+        /* char counter */
+        .char-hint {
+            font-family: var(--mono);
+            font-size: 0.68rem;
+            color: var(--text-sec);
+            text-align: right;
+            margin-top: 4px;
+        }
+
+        @media (max-width: 860px) {
+            .page { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <div class="topbar-left">
+            <a href="/admin" class="back-link">← Назад</a>
+            <span class="topbar-title">{{ article.editorial_title or article.title or article.id }}</span>
+        </div>
+        <div class="topbar-actions">
+            {% if article.telegraph_url %}
+            <a href="{{ article.telegraph_url }}" class="topbar-link" target="_blank">Telegraph ↗</a>
+            {% endif %}
+            {% if article.url %}
+            <a href="{{ article.url }}" class="topbar-link" target="_blank">Оригинал ↗</a>
+            {% endif %}
+            <button class="btn-save" form="edit-form" type="submit">Сохранить</button>
+        </div>
+    </div>
+
+    {% if saved %}
+    <div class="toast">✓ Сохранено</div>
+    {% endif %}
+
+    <form id="edit-form" method="POST" action="/admin/article/{{ article.id }}">
+    <div class="page">
+        <!-- Main column -->
+        <div class="main-col">
+
+            <!-- Заголовки -->
+            <div class="section">
+                <div class="section-header"><span class="dot"></span>Заголовки</div>
+                <div class="section-body">
+                    <div class="field">
+                        <label>Editorial Title (AI)</label>
+                        <input type="text" name="editorial_title" value="{{ article.editorial_title or '' }}">
+                    </div>
+                    <div class="field">
+                        <label>Оригинальный заголовок</label>
+                        <input type="text" name="title" value="{{ article.title or '' }}">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Тизер -->
+            <div class="section">
+                <div class="section-header"><span class="dot"></span>Тизер</div>
+                <div class="section-body">
+                    <div class="field">
+                        <label>Editorial Teaser</label>
+                        <textarea name="editorial_teaser" class="short" id="teaser-ta">{{ article.editorial_teaser or '' }}</textarea>
+                        <div class="char-hint" id="teaser-count"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Контент — вкладки -->
+            <div class="section">
+                <div class="tab-strip">
+                    <button type="button" class="tab-btn active" data-tab="rewritten">Rewritten</button>
+                    <button type="button" class="tab-btn" data-tab="telegraph">Telegraph HTML</button>
+                    <button type="button" class="tab-btn" data-tab="telegram">Telegram Post</button>
+                </div>
+
+                <div class="tab-panel active" id="tab-rewritten">
+                    <label>Editorial Rewritten (основной текст)</label>
+                    <textarea name="editorial_rewritten" class="xtall">{{ article.editorial_rewritten or '' }}</textarea>
+                </div>
+                <div class="tab-panel" id="tab-telegraph">
+                    <label>Telegraph Content HTML</label>
+                    <textarea name="telegraph_content_html" class="xtall">{{ article.telegraph_content_html or '' }}</textarea>
+                </div>
+                <div class="tab-panel" id="tab-telegram">
+                    <label>Telegram Post Text (HTML)</label>
+                    <textarea name="telegram_post_text" class="xtall">{{ article.telegram_post_text or '' }}</textarea>
+                </div>
+            </div>
+
+            <!-- URLs / медиа -->
+            <div class="section">
+                <div class="section-header"><span class="dot"></span>Ссылки и медиа</div>
+                <div class="section-body">
+                    <div class="field">
+                        <label>Cover Image URL</label>
+                        <input type="url" name="telegram_cover_image" value="{{ article.telegram_cover_image or '' }}">
+                    </div>
+                    <div class="field">
+                        <label>Source URL (оригинал)</label>
+                        <input type="url" name="url" value="{{ article.url or '' }}">
+                    </div>
+                    <div class="field">
+                        <label>Source (название)</label>
+                        <input type="text" name="source" value="{{ article.source or '' }}">
+                    </div>
+                    <div class="field">
+                        <label>Author</label>
+                        <input type="text" name="author" value="{{ article.author or '' }}">
+                    </div>
+                </div>
+            </div>
+
+        </div><!-- /main-col -->
+
+        <!-- Sidebar -->
+        <div class="sidebar">
+
+            <!-- Статус и score -->
+            <div class="section">
+                <div class="section-header"><span class="dot"></span>Публикация</div>
+                <div class="section-body">
+                    <div class="field">
+                        <label>Статус</label>
+                        <select name="status" class="status-select">
+                            <option value="pending"   {% if article.status == 'pending'   %}selected{% endif %}>pending</option>
+                            <option value="processed" {% if article.status == 'processed' %}selected{% endif %}>processed</option>
+                            <option value="published" {% if article.status == 'published' %}selected{% endif %}>published</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label>Relevance Score (0–10)</label>
+                        <input type="number" name="relevance_score" class="score-input"
+                               min="0" max="10" step="0.1"
+                               value="{{ '%.1f'|format(article.relevance_score) if article.relevance_score is not none else '' }}">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Теги -->
+            <div class="section">
+                <div class="section-header"><span class="dot"></span>Теги</div>
+                <div class="section-body">
+                    <div class="field">
+                        <label>Через запятую</label>
+                        <input type="text" name="tags_str" value="{{ article.tags_str or '' }}" placeholder="ai, python, backend">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Мета -->
+            <div class="section">
+                <div class="section-header"><span class="dot"></span>Инфо</div>
+                <div class="meta-row">
+                    <span class="meta-key">ID</span>
+                    <span class="meta-val" style="font-family:var(--mono);font-size:0.7rem;color:var(--text-sec)">
+                        {{ article.id|string|truncate(18, True, '…') }}
+                    </span>
+                </div>
+                {% if article.created_at %}
+                <div class="meta-row">
+                    <span class="meta-key">Создано</span>
+                    <span class="meta-val">
+                        {{ article.created_at.strftime('%d.%m.%Y %H:%M') if article.created_at.strftime is defined else article.created_at|string|truncate(16,True,'') }}
+                    </span>
+                </div>
+                {% endif %}
+                {% if article.updated_at %}
+                <div class="meta-row">
+                    <span class="meta-key">Обновлено</span>
+                    <span class="meta-val">
+                        {{ article.updated_at.strftime('%d.%m.%Y %H:%M') if article.updated_at.strftime is defined else article.updated_at|string|truncate(16,True,'') }}
+                    </span>
+                </div>
+                {% endif %}
+                {% if article.telegraph_url %}
+                <div class="meta-row">
+                    <span class="meta-key">Telegraph</span>
+                    <span class="meta-val">
+                        <a href="{{ article.telegraph_url }}" class="ext-link" target="_blank">Открыть ↗</a>
+                    </span>
+                </div>
+                {% endif %}
+            </div>
+
+        </div><!-- /sidebar -->
+    </div>
+    </form>
+
+    <script>
+    // ── Tabs ──
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const tab = btn.dataset.tab;
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById('tab-' + tab).classList.add('active');
+        });
+    });
+
+    // ── Char counter for teaser ──
+    const teaserTa = document.getElementById('teaser-ta');
+    const teaserCount = document.getElementById('teaser-count');
+    function updateCount() {
+        const n = teaserTa.value.length;
+        teaserCount.textContent = n + ' симв.';
+        teaserCount.style.color = n > 300 ? '#f87171' : '#6b6b7a';
+    }
+    if (teaserTa) {
+        teaserTa.addEventListener('input', updateCount);
+        updateCount();
+    }
+
+    // ── Auto-dismiss toast ──
+    const toast = document.querySelector('.toast');
+    if (toast) setTimeout(() => toast.remove(), 3200);
+
+    // ── Ctrl+S to save ──
+    document.addEventListener('keydown', e => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+            e.preventDefault();
+            document.getElementById('edit-form').submit();
+        }
+    });
+    </script>
+</body>
+</html>
