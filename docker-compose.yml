@@ -94,13 +94,12 @@ services:
 
     environment:
       OLLAMA_HOST: "0.0.0.0:11434"
-      OLLAMA_NUM_GPU: -1          # Авто-режим
-      OLLAMA_GPU_MEMORY: 10GB     # 10GB из 11GB (1GB запас)
-      OLLAMA_GPU_LAYERS: auto     # Гибрид GPU+RAM
+      OLLAMA_NUM_GPU: -1
+      OLLAMA_GPU_MEMORY: 10GB
+      OLLAMA_GPU_LAYERS: auto
     ports:
       - "${OLLAMA_PORT:-11434}:11434"
     volumes:
-      # Модели сохраняются физически в ./ollama_models
       - ./ollama_models:/root/.ollama
     networks:
       - news-aggregator-network
@@ -120,26 +119,18 @@ services:
     restart: unless-stopped
     <<: *image-policy
     environment:
-      # Database
       DB_CLIENT: postgres
       DB_HOST: postgres
       DB_PORT: 5432
       DB_DATABASE: ${POSTGRES_DB:-news_aggregator}
       DB_USER: ${POSTGRES_USER:-newsaggregator}
       DB_PASSWORD: ${POSTGRES_PASSWORD:-changeme123}
-
-      # Directus Config
       KEY: ${DIRECTUS_KEY:-replace-with-random-value-in-production}
       SECRET: ${DIRECTUS_SECRET:-replace-with-another-random-value}
-
-      # Admin User
       ADMIN_EMAIL: ${DIRECTUS_ADMIN_EMAIL:-admin@example.com}
       ADMIN_PASSWORD: ${DIRECTUS_ADMIN_PASSWORD:-admin}
-
-      # Settings
       PUBLIC_URL: http://localhost:8055
       WEBSOCKETS_ENABLED: true
-
     ports:
       - "${DIRECTUS_PORT:-8055}:8055"
     volumes:
@@ -174,6 +165,9 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
       TELEGRAM_CHANNEL_URL: ${TELEGRAM_CHANNEL_URL}
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
+      ENABLE_IMAGE_TRANSFORM: ${ENABLE_IMAGE_TRANSFORM:-true}
     ports:
       - "8000:8000"
     volumes:
@@ -191,6 +185,34 @@ services:
         condition: service_started
 
   # ============================================================================
+  # Web Blog (Public Site + Admin Panel)
+  # ============================================================================
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: news-aggregator-web
+    restart: unless-stopped
+    command: bash -c "cd /app/web && uvicorn app:app --host 0.0.0.0 --port 8080"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-newsaggregator}:${POSTGRES_PASSWORD:-changeme123}@postgres:5432/${POSTGRES_DB:-news_aggregator}
+      SITE_URL: ${SITE_URL:-http://localhost:8080}
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme}
+      SESSION_SECRET: ${SESSION_SECRET:-dev-secret-change-in-prod}
+      PYTHONUNBUFFERED: 1
+      PYTHONPATH: /app/web
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./web:/app/web
+    networks:
+      - news-aggregator-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ============================================================================
   # n8n Workflow Automation
   # ============================================================================
   n8n:
@@ -199,15 +221,12 @@ services:
     restart: unless-stopped
     <<: *image-policy
     environment:
-      # Database
       DB_TYPE: postgresdb
       DB_POSTGRESDB_HOST: postgres
       DB_POSTGRESDB_PORT: 5432
       DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-news_aggregator}
       DB_POSTGRESDB_USER: ${POSTGRES_USER:-newsaggregator}
       DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:-changeme123}
-
-      # n8n Configuration
       N8N_BASIC_AUTH_ACTIVE: "true"
       N8N_BASIC_AUTH_USER: ${N8N_USER:-admin}
       N8N_BASIC_AUTH_PASSWORD: ${N8N_PASSWORD:-changeme123}
@@ -215,23 +234,14 @@ services:
       N8N_PORT: ${N8N_PORT:-5678}
       N8N_PROTOCOL: ${N8N_PROTOCOL:-http}
       WEBHOOK_URL: ${N8N_WEBHOOK_URL:-http://localhost:5678/}
-
-      # Security
       N8N_JWT_SECRET: ${N8N_JWT_SECRET:-your-jwt-secret}
-
-      # Integration settings
       N8N_METRICS: true
       N8N_DIAGNOSTICS_ENABLED: false
       N8N_USER_FOLDER: /home/node/.n8n
-
-      # Logging
       N8N_LOG_LEVEL: info
       N8N_LOG_OUTPUT: console
-
-      # Add these for better FastAPI integration
       N8N_BINARY_DATA_MODE: filesystem
       N8N_FILE_STORAGE_PATH: /home/node/.n8n/files
-
     ports:
       - "${N8N_PORT:-5678}:5678"
     volumes:
@@ -243,7 +253,7 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: [ "CMD-SHELL", "curl -f http://localhost:5678/healthz || exit 1" ]
+      test: ["CMD-SHELL", "curl -f http://localhost:5678/healthz || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
