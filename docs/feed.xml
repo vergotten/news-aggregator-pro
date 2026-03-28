@@ -5,8 +5,20 @@
     <description>Curated tech news from Habr and more</description>
     <link>https://github.com</link>
     <language>ru</language>
-    <lastBuildDate>Fri, 27 Mar 2026 13:23:19 +0000</lastBuildDate>
+    <lastBuildDate>Sat, 28 Mar 2026 13:11:27 +0000</lastBuildDate>
     <generator>news-aggregator-pro/generate_rss.py</generator>
+    <item>
+      <title>Новые мини-ПК весны 2026: CM5, RK3588, Strix Halo, Panther Lake</title>
+      <link>https://telegra.ph/Novye-mini-PK-vesny-2026-CM5-RK3588-Strix-Halo-Panther-Lake-03-28</link>
+      <guid isPermaLink="false">3fde1d1f-0b63-429d-9fe0-3b03b4e670f2</guid>
+      <description>Весной 2026 года представлены мини-ПК на CM5, RK3588, Strix Halo и Panther Lake. GMK EVO-T2 оснащен процессорами Intel Panther Lake, 10GbE и OCuLink, поддерживает до 128 ГБ памяти и ИИ-ускорители.</description>
+      <pubDate>Sat, 21 Mar 2026 08:01:23 +0000</pubDate>
+      <category>Блог компании Selectel</category>
+      <category>Гаджеты</category>
+      <category>Настольные компьютеры</category>
+      <category>Процессоры</category>
+      <category>Компьютерное железо</category>
+    </item>
     <item>
       <title>Тест для специалиста: каким типом данных хранить номер паспорта?</title>
       <link>https://telegra.ph/Test-dlya-specialista-kakim-tipom-dannyh-hranit-nomer-pasporta-03-27</link>
