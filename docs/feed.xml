@@ -5,19 +5,16 @@
     <description>Curated tech news from Habr and more</description>
     <link>https://github.com</link>
     <language>ru</language>
-    <lastBuildDate>Sat, 28 Mar 2026 13:11:27 +0000</lastBuildDate>
+    <lastBuildDate>Sun, 29 Mar 2026 13:12:24 +0000</lastBuildDate>
     <generator>news-aggregator-pro/generate_rss.py</generator>
     <item>
-      <title>Новые мини-ПК весны 2026: CM5, RK3588, Strix Halo, Panther Lake</title>
-      <link>https://telegra.ph/Novye-mini-PK-vesny-2026-CM5-RK3588-Strix-Halo-Panther-Lake-03-28</link>
-      <guid isPermaLink="false">3fde1d1f-0b63-429d-9fe0-3b03b4e670f2</guid>
-      <description>Весной 2026 года представлены мини-ПК на CM5, RK3588, Strix Halo и Panther Lake. GMK EVO-T2 оснащен процессорами Intel Panther Lake, 10GbE и OCuLink, поддерживает до 128 ГБ памяти и ИИ-ускорители.</description>
-      <pubDate>Sat, 21 Mar 2026 08:01:23 +0000</pubDate>
-      <category>Блог компании Selectel</category>
-      <category>Гаджеты</category>
-      <category>Настольные компьютеры</category>
-      <category>Процессоры</category>
-      <category>Компьютерное железо</category>
+      <title>Утилиты RTT Viewer и System Viewer: функции и применение</title>
+      <link>https://telegra.ph/Utility-RTT-Viewer-i-System-Viewer-funkcii-i-primenenie-03-29</link>
+      <guid isPermaLink="false">5f8e8d7f-bd43-4acb-be8c-e597640ad427</guid>
+      <description>RTT Viewer от SEGGER J-Link обеспечивает быстрый обмен данными между микроконтроллером и компьютером через кольцевые буферы в RAM. Используется для вывода отладочной информации.</description>
+      <pubDate>Sat, 21 Mar 2026 06:01:00 +0000</pubDate>
+      <category>Производство и разработка электроники</category>
+      <category>Электроника для начинающих</category>
     </item>
     <item>
       <title>Тест для специалиста: каким типом данных хранить номер паспорта?</title>
@@ -30,6 +27,18 @@
       <category>Карьера в IT-индустрии</category>
       <category>Качество кода</category>
       <category>SQL</category>
+    </item>
+    <item>
+      <title>Новые мини-ПК весны 2026: CM5, RK3588, Strix Halo, Panther Lake</title>
+      <link>https://telegra.ph/Novye-mini-PK-vesny-2026-CM5-RK3588-Strix-Halo-Panther-Lake-03-28</link>
+      <guid isPermaLink="false">3fde1d1f-0b63-429d-9fe0-3b03b4e670f2</guid>
+      <description>Весной 2026 года представлены мини-ПК на CM5, RK3588, Strix Halo и Panther Lake. GMK EVO-T2 оснащен процессорами Intel Panther Lake, 10GbE и OCuLink, поддерживает до 128 ГБ памяти и ИИ-ускорители.</description>
+      <pubDate>Sat, 21 Mar 2026 08:01:23 +0000</pubDate>
+      <category>Блог компании Selectel</category>
+      <category>Гаджеты</category>
+      <category>Настольные компьютеры</category>
+      <category>Процессоры</category>
+      <category>Компьютерное железо</category>
     </item>
     <item>
       <title>4 стратегии применения LLM в процессе разработки软件可能会生成俄语回答，但根据要求，我只是提供新的标题，而不包含任何语言的额外解释或说明。因此，按照要求，答案为：</title>
