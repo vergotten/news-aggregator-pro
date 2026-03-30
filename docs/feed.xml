@@ -5,8 +5,18 @@
     <description>Curated tech news from Habr and more</description>
     <link>https://github.com</link>
     <language>ru</language>
-    <lastBuildDate>Sun, 29 Mar 2026 13:12:24 +0000</lastBuildDate>
+    <lastBuildDate>Mon, 30 Mar 2026 13:51:15 +0000</lastBuildDate>
     <generator>news-aggregator-pro/generate_rss.py</generator>
+    <item>
+      <title>Дизайн-токены: гайд по архитектуре и неймингу с примерами и упражнениями</title>
+      <link>https://telegra.ph/Dizajn-tokeny-gajd-po-arhitekture-i-nejmingu-s-primerami-i-uprazhneniyami-03-30</link>
+      <guid isPermaLink="false">97b336b3-f2b1-4f4c-b437-c56917d9c718</guid>
+      <description>Дизайн-токены улучшают взаимодействие между дизайнерами и разработчиками, обеспечивая гибкость и уменьшая технический долг.</description>
+      <pubDate>Sat, 21 Mar 2026 05:00:39 +0000</pubDate>
+      <category>Дизайн</category>
+      <category>CSS</category>
+      <category>HTML</category>
+    </item>
     <item>
       <title>Утилиты RTT Viewer и System Viewer: функции и применение</title>
       <link>https://telegra.ph/Utility-RTT-Viewer-i-System-Viewer-funkcii-i-primenenie-03-29</link>
