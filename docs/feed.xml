@@ -5,8 +5,20 @@
     <description>Curated tech news from Habr and more</description>
     <link>https://github.com</link>
     <language>ru</language>
-    <lastBuildDate>Mon, 30 Mar 2026 13:51:15 +0000</lastBuildDate>
+    <lastBuildDate>Tue, 31 Mar 2026 13:51:18 +0000</lastBuildDate>
     <generator>news-aggregator-pro/generate_rss.py</generator>
+    <item>
+      <title>Конкурсные списки: публикация СНИЛС и приказов о зачислении угрожает персональными данными</title>
+      <link>https://telegra.ph/Konkursnye-spiski-publikaciya-SNILS-i-prikazov-o-zachislenii-ugrozhaet-personalnymi-dannymi-03-31</link>
+      <guid isPermaLink="false">22845cb3-56d9-427c-93d5-369e4f158355</guid>
+      <description>Приемная кампания в российских учебных заведениях сопряжена с риском утечки персональных данных. Анализ показал, что 87 из 100 сайтов позволяют деанонимизацию информации через СНИЛС и ФИО.</description>
+      <pubDate>Fri, 20 Mar 2026 21:30:33 +0000</pubDate>
+      <category>IT-стандарты</category>
+      <category>IT-инфраструктура</category>
+      <category>Анализ и проектирование систем</category>
+      <category>Базы данных</category>
+      <category>Восстановление данных</category>
+    </item>
     <item>
       <title>Дизайн-токены: гайд по архитектуре и неймингу с примерами и упражнениями</title>
       <link>https://telegra.ph/Dizajn-tokeny-gajd-po-arhitekture-i-nejmingu-s-primerami-i-uprazhneniyami-03-30</link>
