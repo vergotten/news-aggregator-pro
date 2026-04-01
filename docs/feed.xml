@@ -5,8 +5,18 @@
     <description>Curated tech news from Habr and more</description>
     <link>https://github.com</link>
     <language>ru</language>
-    <lastBuildDate>Tue, 31 Mar 2026 13:51:18 +0000</lastBuildDate>
+    <lastBuildDate>Wed, 01 Apr 2026 13:54:07 +0000</lastBuildDate>
     <generator>news-aggregator-pro/generate_rss.py</generator>
+    <item>
+      <title>Может ли парусная яхта двигаться быстрее скорости ветра?</title>
+      <link>https://telegra.ph/Mozhet-li-parusnaya-yahta-dvigatsya-bystree-skorosti-vetra-04-01</link>
+      <guid isPermaLink="false">8b57369f-a448-4d7c-a654-ec3e3fc6f851</guid>
+      <description>Вопрос о возможности движения парусного судна быстрее ветра вызывал споры на протяжении десятилетий. В конце XIX века Г. Герлах теоретически подтвердил эту возможность, но практическое решение нашлось лишь в XX веке.</description>
+      <pubDate>Fri, 20 Mar 2026 20:59:04 +0000</pubDate>
+      <category>Научно-популярное</category>
+      <category>Физика</category>
+      <category>Транспорт</category>
+    </item>
     <item>
       <title>Конкурсные списки: публикация СНИЛС и приказов о зачислении угрожает персональными данными</title>
       <link>https://telegra.ph/Konkursnye-spiski-publikaciya-SNILS-i-prikazov-o-zachislenii-ugrozhaet-personalnymi-dannymi-03-31</link>
