@@ -5,8 +5,18 @@
     <description>Curated tech news from Habr and more</description>
     <link>https://github.com</link>
     <language>ru</language>
-    <lastBuildDate>Wed, 01 Apr 2026 13:54:07 +0000</lastBuildDate>
+    <lastBuildDate>Thu, 02 Apr 2026 13:44:31 +0000</lastBuildDate>
     <generator>news-aggregator-pro/generate_rss.py</generator>
+    <item>
+      <title>Создание USB контроллера на чипе FPGA и интеграция клавиатуры</title>
+      <link>https://telegra.ph/Sozdanie-USB-kontrollera-na-chipe-FPGA-i-integraciya-klaviatury-04-02</link>
+      <guid isPermaLink="false">4adffbbf-df52-4c8e-b0a3-0c64ba11edea</guid>
+      <description>Создан USB контроллер на FPGA чипе. Подключена клавиатура, демонстрируя работу с USB версии 1.1.</description>
+      <pubDate>Fri, 20 Mar 2026 19:18:55 +0000</pubDate>
+      <category>DIY или Сделай сам</category>
+      <category>FPGA</category>
+      <category>Электроника для начинающих</category>
+    </item>
     <item>
       <title>Может ли парусная яхта двигаться быстрее скорости ветра?</title>
       <link>https://telegra.ph/Mozhet-li-parusnaya-yahta-dvigatsya-bystree-skorosti-vetra-04-01</link>
