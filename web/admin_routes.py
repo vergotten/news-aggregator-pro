@@ -116,7 +116,7 @@ def fetch_articles(status: Optional[str] = None, search: Optional[str] = None, l
 def fetch_article(article_id: str):
     conn = get_conn()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    cur.execute("SELECT * FROM articles WHERE id = %s", (article_id,))
+    cur.execute("SELECT *, COALESCE(dzen_approved, FALSE) as dzen_approved FROM articles WHERE id = %s", (article_id,))
     row = cur.fetchone()
     cur.close()
     conn.close()
@@ -133,7 +133,7 @@ def update_article(article_id: str, data: dict):
         "editorial_title", "editorial_teaser", "editorial_rewritten",
         "telegram_post_text", "telegraph_content_html", "relevance_score",
         "status", "tags", "title", "author", "source", "url",
-        "telegram_cover_image",
+        "telegram_cover_image", "dzen_approved",
     }
     filtered = {k: v for k, v in data.items() if k in allowed and v is not None}
     filtered["updated_at"] = datetime.utcnow()
@@ -278,6 +278,7 @@ async def article_save(
     source: str = Form(default=""),
     url: str = Form(default=""),
     telegram_cover_image: str = Form(default=""),
+    dzen_approved: str = Form(default=""),
 ):
     if not is_authenticated(request):
         return RedirectResponse(url="/admin/login", status_code=303)
@@ -307,6 +308,7 @@ async def article_save(
         "source": source or None,
         "url": url or None,
         "telegram_cover_image": telegram_cover_image or None,
+        "dzen_approved": dzen_approved == "on",
     }
 
     update_article(article_id, data)
