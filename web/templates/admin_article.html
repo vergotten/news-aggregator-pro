@@ -273,6 +273,15 @@
             margin-top: 4px;
         }
 
+        .toggle-row { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; }
+        .toggle-label { font-size: 0.85rem; font-weight: 500; }
+        .toggle-sub { font-size: 0.72rem; color: var(--text-sec); font-family: var(--mono); margin-top: 2px; }
+        .toggle { position: relative; width: 40px; height: 22px; flex-shrink: 0; }
+        .toggle input { opacity: 0; width: 0; height: 0; }
+        .toggle-slider { position: absolute; inset: 0; background: var(--border); border-radius: 22px; cursor: pointer; transition: background 0.2s; }
+        .toggle-slider::before { content: ""; position: absolute; width: 16px; height: 16px; left: 3px; top: 3px; background: white; border-radius: 50%; transition: transform 0.2s; }
+        .toggle input:checked + .toggle-slider { background: var(--accent); }
+        .toggle input:checked + .toggle-slider::before { transform: translateX(18px); }
         @media (max-width: 860px) {
             .page { grid-template-columns: 1fr; }
         }
@@ -423,6 +432,21 @@
                         <label>Через запятую</label>
                         <input type="text" name="tags_str" value="{{ article.tags_str or '' }}" placeholder="ai, python, backend">
                     </div>
+                </div>
+            </div>
+
+            <!-- Дзен модерация -->
+            <div class="section">
+                <div class="section-header"><span class="dot"></span>Дзен RSS</div>
+                <div class="toggle-row">
+                    <div>
+                        <div class="toggle-label">Одобрить для Дзена</div>
+                        <div class="toggle-sub">Появится в /feed/dzen.xml</div>
+                    </div>
+                    <label class="toggle">
+                        <input type="checkbox" name="dzen_approved" {% if article.dzen_approved %}checked{% endif %}>
+                        <span class="toggle-slider"></span>
+                    </label>
                 </div>
             </div>
 
