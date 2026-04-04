@@ -5,8 +5,20 @@
     <description>Curated tech news from Habr and more</description>
     <link>https://github.com</link>
     <language>ru</language>
-    <lastBuildDate>Fri, 03 Apr 2026 13:20:20 +0000</lastBuildDate>
+    <lastBuildDate>Sat, 04 Apr 2026 13:12:19 +0000</lastBuildDate>
     <generator>news-aggregator-pro/generate_rss.py</generator>
+    <item>
+      <title>Китай опередил Neuralink: мировой первый коммерческий нейроимплант</title>
+      <link>https://telegra.ph/Kitaj-operedil-Neuralink-mirovoj-pervyj-kommercheskij-nejroimplant-03-16</link>
+      <guid isPermaLink="false">d2f8f2de-ead8-4a9a-81b6-9a04c91e459a</guid>
+      <description>Китай получил первую лицензию на коммерческое использование нейроинтерфейса NEO, позволяющего парализованным пациентам управлять роботизированной перчаткой. Устройство прошло успешные клинические испытания и готово к массовому внедрению.</description>
+      <pubDate>Sun, 15 Mar 2026 06:01:24 +0000</pubDate>
+      <category>Научно-популярное</category>
+      <category>Искусственный интеллект</category>
+      <category>Биотехнологии</category>
+      <category>Компьютерное железо</category>
+      <category>Машинное обучение</category>
+    </item>
     <item>
       <title>Создание USB контроллера на чипе FPGA и интеграция клавиатуры</title>
       <link>https://telegra.ph/Sozdanie-USB-kontrollera-na-chipe-FPGA-i-integraciya-klaviatury-04-02</link>
@@ -316,18 +328,6 @@
       <category>Программирование</category>
       <category>Отладка</category>
       <category>Искусственный интеллект</category>
-    </item>
-    <item>
-      <title>Китай опередил Neuralink: мировой первый коммерческий нейроимплант</title>
-      <link>https://telegra.ph/Kitaj-operedil-Neuralink-mirovoj-pervyj-kommercheskij-nejroimplant-03-16</link>
-      <guid isPermaLink="false">d2f8f2de-ead8-4a9a-81b6-9a04c91e459a</guid>
-      <description>Китай получил первую лицензию на коммерческое использование нейроинтерфейса NEO, позволяющего парализованным пациентам управлять роботизированной перчаткой. Устройство прошло успешные клинические испытания и готово к массовому внедрению.</description>
-      <pubDate>Sun, 15 Mar 2026 06:01:24 +0000</pubDate>
-      <category>Научно-популярное</category>
-      <category>Искусственный интеллект</category>
-      <category>Биотехнологии</category>
-      <category>Компьютерное железо</category>
-      <category>Машинное обучение</category>
     </item>
   </channel>
 </rss>
