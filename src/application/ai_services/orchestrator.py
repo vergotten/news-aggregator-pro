@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Оркестратор AI-обработки статей v5.1
+Оркестратор AI-обработки статей v5.2
 
-Изменения v5.1:
-- Интеграция с SkiplistService
-- Пропуск проблемных URL
-- Добавление в skiplist при ошибках
-- Передача URL в normalizer для отслеживания
+Изменения v5.2:
+- Добавлен CatCommentatorAgent (шаг 11)
+- Булево значение enable_cat_comment в process_article
+- cat_comment сохраняется в article и добавляется в telegram_post_text
 """
 
 import logging
@@ -18,13 +17,11 @@ from src.domain.entities.article import Article
 from src.infrastructure.ai.llm_provider import LLMProviderFactory
 from src.infrastructure.ai.qdrant_client import QdrantService
 
-# Skiplist
 from src.infrastructure.skiplist import (
     get_skiplist_service,
     SkipReason,
 )
 
-# Агенты
 from src.application.ai_services.agents import (
     ClassifierAgent,
     RelevanceAgent,
@@ -37,13 +34,13 @@ from src.application.ai_services.agents.telegram_formatter_agent import Telegram
 from src.application.ai_services.agents.telegraph_formatter_agent import TelegraphFormatterAgent
 from src.application.ai_services.agents.image_prompt_agent import ImagePromptAgent
 from src.application.ai_services.agents.image_transform_agent import ImageTransformAgent
+from src.application.ai_services.agents.cat_commentator_agent import CatCommentatorAgent
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class ModelAttempt:
-    """Информация о попытке использования модели."""
     model_id: str
     success: bool
     error: Optional[str] = None
@@ -57,7 +54,6 @@ class ModelAttempt:
 
 @dataclass
 class ProcessingStats:
-    """Статистика обработки одной статьи."""
     article_id: str
     title: str
     steps: List[Dict[str, Any]] = field(default_factory=list)
@@ -71,11 +67,7 @@ class ProcessingStats:
 
 
 class AIOrchestrator:
-    """
-    Оркестратор AI-обработки статей v5.1
-
-    Интегрирован с SkiplistService для пропуска проблемных URL.
-    """
+    """Оркестратор AI-обработки статей v5.2"""
 
     EXCLUDED_MODELS = [
         "nvidia/nemotron",
@@ -98,13 +90,11 @@ class AIOrchestrator:
             self.strategy = strategy
             self.enable_fallback = enable_fallback
 
-            # LLM провайдер
             if provider:
                 self.llm_provider = LLMProviderFactory.create_auto(provider=provider)
             else:
                 self.llm_provider = LLMProviderFactory.create_auto()
 
-            # Skiplist
             self.skiplist = get_skiplist_service()
 
             # Агенты (ленивая инициализация)
@@ -118,15 +108,14 @@ class AIOrchestrator:
             self._telegraph_formatter: Optional[TelegraphFormatterAgent] = None
             self._image_prompt: Optional[ImagePromptAgent] = None
             self._image_transform: Optional[ImageTransformAgent] = None
+            self._cat_commentator: Optional[CatCommentatorAgent] = None
 
-            # Qdrant
             self.qdrant = QdrantService()
 
             logger.info(
-                f"[Orchestrator] Initialized: provider={provider}, "
+                f"[Orchestrator] v5.2 Initialized: provider={provider}, "
                 f"fallback={enable_fallback}, skiplist={len(self.skiplist.list_urls())} URLs"
             )
-
             self._log_available_models()
 
         except Exception as e:
@@ -197,6 +186,12 @@ class AIOrchestrator:
             self._image_transform = ImageTransformAgent()
         return self._image_transform
 
+    @property
+    def cat_commentator(self) -> CatCommentatorAgent:
+        if self._cat_commentator is None:
+            self._cat_commentator = CatCommentatorAgent()
+        return self._cat_commentator
+
     # =========================================================================
     # Основной метод обработки
     # =========================================================================
@@ -205,7 +200,8 @@ class AIOrchestrator:
             self,
             article: Article,
             verbose: bool = False,
-            min_relevance: int = 5
+            min_relevance: int = 5,
+            enable_cat_comment: bool = True,
     ) -> Optional[Article]:
         """
         Полная обработка статьи.
@@ -214,9 +210,7 @@ class AIOrchestrator:
             article: Статья для обработки
             verbose: Подробный вывод
             min_relevance: Минимальная релевантность
-
-        Returns:
-            Обработанная статья или None
+            enable_cat_comment: Добавлять комментарий НейроКота (default: True)
         """
         start_time = time.time()
         stats = ProcessingStats(
@@ -247,16 +241,11 @@ class AIOrchestrator:
                 title=article.title,
                 content=(article.content or "")[:1000]
             )
-
             article.is_news = classification.is_news
             step_time = time.time() - step_start
-
             stats.model_attempts.append(ModelAttempt(
-                model_id=self.classifier.model,
-                success=True,
-                response_time=step_time
+                model_id=self.classifier.model, success=True, response_time=step_time
             ))
-
             logger.info(f"[Orchestrator] Classification: {'NEWS' if article.is_news else 'ARTICLE'} ({classification.confidence:.0%})")
 
             # =========================================================
@@ -270,20 +259,14 @@ class AIOrchestrator:
                 content=(article.content or "")[:1500],
                 tags=article.tags
             )
-
             article.relevance_score = float(relevance_result.score)
             article.relevance_reason = relevance_result.reason
             step_time = time.time() - step_start
-
             stats.model_attempts.append(ModelAttempt(
-                model_id=self.relevance.model,
-                success=True,
-                response_time=step_time
+                model_id=self.relevance.model, success=True, response_time=step_time
             ))
-
             logger.info(f"[Orchestrator] Relevance: {article.relevance_score}/10")
 
-            # Проверка минимальной релевантности
             if article.relevance_score < min_relevance:
                 logger.info(f"[Orchestrator] Low relevance ({article.relevance_score} < {min_relevance}), skipping further processing")
                 stats.success = True
@@ -300,16 +283,11 @@ class AIOrchestrator:
                 title=article.title,
                 content=(article.content or "")[:3000]
             )
-
             article.editorial_teaser = summary_result.teaser
             step_time = time.time() - step_start
-
             stats.model_attempts.append(ModelAttempt(
-                model_id=self.summarizer.model,
-                success=True,
-                response_time=step_time
+                model_id=self.summarizer.model, success=True, response_time=step_time
             ))
-
             logger.info(f"[Orchestrator] Teaser: {len(article.editorial_teaser)} chars")
 
             # =========================================================
@@ -322,16 +300,11 @@ class AIOrchestrator:
                 title=article.title,
                 content=(article.content or "")[:500]
             )
-
             article.editorial_title = title_result.improved_title
             step_time = time.time() - step_start
-
             stats.model_attempts.append(ModelAttempt(
-                model_id=self.rewriter.model,
-                success=True,
-                response_time=step_time
+                model_id=self.rewriter.model, success=True, response_time=step_time
             ))
-
             logger.info(f"[Orchestrator] Title: {article.editorial_title[:50]}...")
 
             # =========================================================
@@ -341,22 +314,15 @@ class AIOrchestrator:
             step_start = time.time()
 
             content_length = len(article.content or "")
-
-            # Передаём URL для отслеживания в skiplist
             normalization_result = self.normalizer.normalize_with_details(
                 content=article.content or "",
                 url=article.url
             )
-
             step_time = time.time() - step_start
-
             stats.model_attempts.append(ModelAttempt(
-                model_id=self.normalizer.model,
-                success=True,
-                response_time=step_time
+                model_id=self.normalizer.model, success=True, response_time=step_time
             ))
 
-            # Валидация результата
             validation = self.validator.validate(
                 original=article.content or "",
                 normalized=normalization_result.normalized_text
@@ -371,8 +337,6 @@ class AIOrchestrator:
             else:
                 logger.warning(f"[Orchestrator] Normalization failed validation: {validation.issues}")
                 article.editorial_rewritten = None
-
-                # Если много ошибок — добавляем в skiplist
                 if normalization_result.used_fallback and content_length > 50000:
                     self.skiplist.add(
                         article.url,
@@ -403,7 +367,6 @@ class AIOrchestrator:
                     tags=article.tags or [],
                     images=getattr(article, 'images', [])
                 )
-
                 article.telegram_post_text = telegram_post.text
                 article.telegram_cover_image = telegram_post.cover_image
                 if telegram_post.telegraph_needed:
@@ -411,44 +374,33 @@ class AIOrchestrator:
 
                 step_time = time.time() - step_start
                 stats.model_attempts.append(ModelAttempt(
-                    model_id=self.telegram_formatter.model,
-                    success=True,
-                    response_time=step_time
+                    model_id=self.telegram_formatter.model, success=True, response_time=step_time
                 ))
-
                 logger.info(f"[Orchestrator] Telegram: {len(telegram_post.text)} chars")
 
             except Exception as e:
                 logger.warning(f"[Orchestrator] Telegram formatting failed: {e}")
 
             # =========================================================
-            # ШАГ 8: Telegraph форматирование (markdown разметка)
+            # ШАГ 8: Telegraph форматирование
             # =========================================================
             logger.info("[Orchestrator] Step 8: Telegraph formatting...")
             step_start = time.time()
 
             try:
                 telegraph_content = article.editorial_rewritten or article.content or ""
-
                 if len(telegraph_content) > 500:
                     telegraph_result = self.telegraph_formatter.format_for_telegraph(
                         content=telegraph_content
                     )
-
                     article.telegraph_content_html = telegraph_result.formatted_text
-
                     step_time = time.time() - step_start
                     stats.model_attempts.append(ModelAttempt(
-                        model_id=self.telegraph_formatter.model,
-                        success=True,
-                        response_time=step_time
+                        model_id=self.telegraph_formatter.model, success=True, response_time=step_time
                     ))
-
                     logger.info(
                         f"[Orchestrator] Telegraph: {telegraph_result.original_length} → "
-                        f"{telegraph_result.final_length} chars "
-                        f"(compressed={telegraph_result.was_compressed}, "
-                        f"formatted={telegraph_result.was_formatted})"
+                        f"{telegraph_result.final_length} chars"
                     )
                 else:
                     logger.info("[Orchestrator] Telegraph: контент слишком короткий, пропуск")
@@ -468,8 +420,6 @@ class AIOrchestrator:
                     content=article.editorial_rewritten or article.content or "",
                     tags=article.tags or [],
                 )
-
-                # Сохраняем промпт в metadata
                 metadata = getattr(article, 'metadata', {}) or {}
                 metadata['image_prompt'] = prompt_result.prompt
                 metadata['image_prompt_success'] = prompt_result.success
@@ -481,7 +431,6 @@ class AIOrchestrator:
                     success=True,
                     response_time=step_time
                 ))
-
                 logger.info(f"[Orchestrator] Image prompt: {len(prompt_result.prompt)} chars")
 
             except Exception as e:
@@ -497,7 +446,6 @@ class AIOrchestrator:
                 images = getattr(article, 'images', []) or []
                 if images:
                     transform_result = self.image_transform.transform_images(images)
-
                     if transform_result.success_count > 0:
                         article.images = transform_result.transformed_urls
                         logger.info(
@@ -509,10 +457,45 @@ class AIOrchestrator:
                 else:
                     logger.info("[Orchestrator] Images: нет изображений, пропуск")
 
-                step_time = time.time() - step_start
-
             except Exception as e:
                 logger.warning(f"[Orchestrator] Image transformation failed: {e}")
+
+            # =========================================================
+            # ШАГ 11: НейроКот комментарий
+            # =========================================================
+            if enable_cat_comment:
+                logger.info("[Orchestrator] Step 11: Cat comment...")
+                step_start = time.time()
+
+                try:
+                    cat_comment = self.cat_commentator.comment(
+                        title=article.editorial_title or article.title,
+                        teaser=article.editorial_teaser or ""
+                    )
+
+                    if cat_comment:
+                        article.cat_comment = cat_comment
+
+                        # Добавляем в конец telegram_post_text если он есть
+                        if article.telegram_post_text:
+                            cat_block = (
+                                "\n\n"
+                                "🐱 <i>" + cat_comment + "</i>"
+                            )
+                            article.telegram_post_text = article.telegram_post_text + cat_block
+
+                        step_time = time.time() - step_start
+                        stats.model_attempts.append(ModelAttempt(
+                            model_id=self.cat_commentator.model,
+                            success=True,
+                            response_time=step_time
+                        ))
+                        logger.info(f"[Orchestrator] Cat comment: {len(cat_comment)} chars")
+
+                except Exception as e:
+                    logger.warning(f"[Orchestrator] Cat comment failed: {e}")
+            else:
+                logger.info("[Orchestrator] Step 11: Cat comment — отключён")
 
             # =========================================================
             # Завершение
@@ -522,7 +505,6 @@ class AIOrchestrator:
             stats.final_model = self.llm_provider.model
 
             self._log_final_stats(article, stats)
-
             return article
 
         except Exception as e:
@@ -530,7 +512,6 @@ class AIOrchestrator:
             stats.total_time = time.time() - start_time
             logger.error(f"[Orchestrator] Error processing {article.id}: {e}")
 
-            # Добавляем в skiplist при серьёзных ошибках
             error_msg = str(e).lower()
             if 'context' in error_msg or 'maximum' in error_msg:
                 self.skiplist.add(
@@ -540,14 +521,12 @@ class AIOrchestrator:
                     error_message=str(e)[:200]
                 )
             elif 'rate' in error_msg or '429' in error_msg:
-                # Временная блокировка при rate limit
                 self.skiplist.add_temporary(
                     article.url,
                     SkipReason.RATE_LIMITED,
                     minutes=5,
                     error_message=str(e)[:200]
                 )
-
             return None
 
     # =========================================================================
@@ -555,7 +534,6 @@ class AIOrchestrator:
     # =========================================================================
 
     def _log_available_models(self) -> None:
-        """Логирование моделей."""
         try:
             if hasattr(self.llm_provider, '_discovery'):
                 models = self.llm_provider._discovery.get_free_models()
@@ -568,27 +546,24 @@ class AIOrchestrator:
             logger.warning(f"[Orchestrator] Could not get models: {e}")
 
     def _log_final_stats(self, article: Article, stats: ProcessingStats) -> None:
-        """Финальная статистика."""
         logger.info(f"[Orchestrator] DONE: {article.id}")
         logger.info(f"  Title: {article.title[:50]}...")
         logger.info(f"  Type: {'NEWS' if article.is_news else 'ARTICLE'}")
         logger.info(f"  Relevance: {article.relevance_score}/10")
         logger.info(f"  Rewritten: {'Yes' if article.editorial_rewritten else 'No'}")
+        logger.info(f"  Cat comment: {'Yes' if article.cat_comment else 'No'}")
         logger.info(f"  Time: {stats.total_time:.2f}s")
         logger.info(f"  Models used:")
         for attempt in stats.model_attempts:
             logger.info(f"    {attempt}")
 
     def get_skiplist_stats(self) -> dict:
-        """Статистика skiplist."""
         return self.skiplist.get_stats()
 
     def clear_skiplist(self) -> int:
-        """Очистить skiplist."""
         return self.skiplist.clear()
 
     def get_stats(self) -> Dict[str, Any]:
-        """Статистика оркестратора."""
         return {
             "provider": self.provider,
             "strategy": self.strategy,
@@ -603,28 +578,21 @@ class AIOrchestrator:
                 "validator": self._validator is not None,
                 "telegram_formatter": self._telegram_formatter is not None,
                 "telegraph_formatter": self._telegraph_formatter is not None,
+                "cat_commentator": self._cat_commentator is not None,
             }
         }
 
 
-# =============================================================================
-# Функции для удобства
-# =============================================================================
-
 def create_orchestrator(provider: str = "openrouter", enable_fallback: bool = True, **kwargs) -> AIOrchestrator:
-    """Создать оркестратор с указанными параметрами."""
     return AIOrchestrator(provider=provider, enable_fallback=enable_fallback, **kwargs)
 
 
 def create_local_orchestrator(**kwargs) -> AIOrchestrator:
-    """Создать оркестратор с локальным Ollama."""
     return AIOrchestrator(provider="ollama", enable_fallback=False, **kwargs)
 
 
 def create_cloud_orchestrator(provider: str = "openrouter", **kwargs) -> AIOrchestrator:
-    """Создать оркестратор с облачным провайдером."""
     return AIOrchestrator(provider=provider, enable_fallback=True, **kwargs)
 
 
-# Обратная совместимость
 ContentOrchestrator = AIOrchestrator
