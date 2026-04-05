@@ -56,7 +56,7 @@ class CatCommentatorAgent(BaseAgent):
     """
 
     agent_name = "cat_commentator"
-    task_type = TaskType.FAST
+    task_type = TaskType.LIGHT
     MIN_RESPONSE_LENGTH = 20
 
     SYSTEM_PROMPT = """Ты — НейроКотΔ, технически подкованный кот-редактор.
