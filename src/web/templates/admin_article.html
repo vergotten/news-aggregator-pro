@@ -359,6 +359,7 @@
                     <button type="button" class="tab-btn active" data-tab="rewritten">Rewritten</button>
                     <button type="button" class="tab-btn" data-tab="telegraph">Telegraph HTML</button>
                     <button type="button" class="tab-btn" data-tab="telegram">Telegram Post</button>
+                    <button type="button" class="tab-btn" data-tab="catprompt">🐱 Промпт обложки</button>
                 </div>
 
                 <div class="tab-panel active" id="tab-rewritten">
@@ -381,6 +382,19 @@
                         ⚠ Статья ещё не опубликована на Telegraph
                     </p>
                     {% endif %}
+                </div>
+                                <div class="tab-panel" id="tab-catprompt">
+                    <label>🐱 Промпт для обложки с НейроКотом</label>
+                    <p style="font-family:var(--mono);font-size:0.75rem;color:var(--text-sec);margin-bottom:12px;">
+                        Скопируй в ChatGPT / DALL-E / FLUX для генерации обложки
+                    </p>
+                    <textarea readonly style="min-height:120px;opacity:0.8;" onclick="this.select()">{{ article.metadata.cat_image_prompt if article.metadata and article.metadata.cat_image_prompt else 'Промпт будет сгенерирован при следующей обработке статьи' }}</textarea>
+                    <div style="margin-top:8px;">
+                        <button type="button" onclick="navigator.clipboard.writeText(document.querySelectorAll('.tab-panel')[3].querySelector('textarea').value);this.textContent='✓ Скопировано!';setTimeout(()=>this.textContent='Копировать',2000)"
+                            style="background:var(--accent-dim);border:1px solid rgba(74,222,128,0.3);color:var(--accent);font-family:var(--mono);font-size:0.78rem;padding:6px 14px;border-radius:6px;cursor:pointer;">
+                            Копировать
+                        </button>
+                    </div>
                 </div>
                 <div class="tab-panel" id="tab-telegram">
                     <label>Telegram Post Text (HTML)</label>
