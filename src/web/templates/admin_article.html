@@ -341,6 +341,18 @@
                 </div>
             </div>
 
+
+            <!-- НейроКот -->
+            <div class="section">
+                <div class="section-header"><span class="dot"></span>🐱 НейроКот</div>
+                <div class="section-body">
+                    <div class="field">
+                        <label>Комментарий НейроКота</label>
+                        <textarea name="cat_comment" class="short" placeholder="Генерируется автоматически в пайплайне...">{{ article.cat_comment or '' }}</textarea>
+                    </div>
+                </div>
+            </div>
+
             <!-- Контент — вкладки -->
             <div class="section">
                 <div class="tab-strip">
@@ -450,6 +462,18 @@
                                {% if article.dzen_approved %}checked{% endif %}>
                         <span class="toggle-slider"></span>
                     </label>
+                </div>
+            </div>
+
+
+            <!-- НейроКот -->
+            <div class="section">
+                <div class="section-header"><span class="dot"></span>🐱 НейроКот</div>
+                <div class="section-body">
+                    <div class="field">
+                        <label>Комментарий кота</label>
+                        <textarea name="cat_comment" class="short" placeholder="Генерируется автоматически в пайплайне...">{{ article.cat_comment or '' }}</textarea>
+                    </div>
                 </div>
             </div>
 
