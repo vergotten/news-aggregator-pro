@@ -420,9 +420,17 @@ class AIOrchestrator:
                     content=article.editorial_rewritten or article.content or "",
                     tags=article.tags or [],
                 )
+                # Кошачий промпт для генерации обложки с НейроКотом
+                cat_prompt_result = self.image_prompt.generate_cat_prompt(
+                    title=article.editorial_title or article.title,
+                    content=article.editorial_rewritten or article.content or "",
+                    tags=article.tags or [],
+                )
                 metadata = getattr(article, 'metadata', {}) or {}
                 metadata['image_prompt'] = prompt_result.prompt
                 metadata['image_prompt_success'] = prompt_result.success
+                metadata['cat_image_prompt'] = cat_prompt_result.prompt
+                metadata['cat_image_prompt_success'] = cat_prompt_result.success
                 article.metadata = metadata
 
                 step_time = time.time() - step_start
