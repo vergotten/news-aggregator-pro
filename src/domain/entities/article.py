@@ -58,7 +58,8 @@ class Article:
     # =========================================================================
     # НейроКот комментарий
     # =========================================================================
-    cat_comment: Optional[str] = None
+    cat_comment_short: Optional[str] = None  # Для Telegram (1-2 предложения)
+    cat_comment: Optional[str] = None        # Для статьи (3-5 предложений)
 
     # =========================================================================
     # Коллекции
@@ -134,8 +135,13 @@ class Article:
         self.updated_at = datetime.utcnow()
 
     def set_cat_comment(self, comment: str) -> None:
-        """Установить комментарий НейроКота."""
+        """Установить длинный комментарий НейроКота (для статьи)."""
         self.cat_comment = comment
+        self.updated_at = datetime.utcnow()
+
+    def set_cat_comment_short(self, comment: str) -> None:
+        """Установить короткий комментарий НейроКота (для Telegram)."""
+        self.cat_comment_short = comment
         self.updated_at = datetime.utcnow()
 
     def set_telegram_content(

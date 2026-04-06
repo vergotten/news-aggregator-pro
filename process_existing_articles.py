@@ -176,6 +176,7 @@ def _update_article_after_ai(article_id: str, processed_article) -> bool:
                 telegraph_content_html = %s,
                 status = %s,
                 updated_at = %s,
+                cat_comment = %s,
                 article_metadata = %s
             WHERE id = %s
         """, (
@@ -190,6 +191,7 @@ def _update_article_after_ai(article_id: str, processed_article) -> bool:
             getattr(processed_article, 'telegraph_content_html', None),
             'processed',
             datetime.utcnow(),
+            getattr(processed_article, 'cat_comment', None),
             json.dumps(getattr(processed_article, 'metadata', {}) or {}, ensure_ascii=False),
             str(article_id),
         ))

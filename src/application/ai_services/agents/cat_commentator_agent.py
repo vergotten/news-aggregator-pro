@@ -3,13 +3,15 @@
 # Путь: src/application/ai_services/agents/cat_commentator_agent.py
 # =============================================================================
 """
-Агент кошачьего комментатора v1.0
+Агент кошачьего комментатора v2.0
 
-НейроКотΔ — маскот канала. Читает заголовок и тизер статьи,
-оставляет короткий саркастичный но добрый комментарий от лица кота.
+Два режима:
+- comment_short() — 1-2 предложения, для Telegram поста (цепляющий)
+- comment_long()  — 3-5 предложений, для статьи (развёрнутый)
 
-Используется как финальный штрих в пайплайне — добавляет уникальный
-голос канала в конец каждой статьи.
+Сохраняется в:
+- article.cat_comment_short → добавляется в telegram_post_text
+- article.cat_comment       → добавляется в editorial_rewritten + telegraph_content_html
 """
 
 import logging
@@ -25,73 +27,87 @@ logger = logging.getLogger(__name__)
 
 
 class CatCommentResult(BaseModel):
-    """Результат кошачьего комментария."""
-
-    comment: str = Field(description="Комментарий НейроКота 2-3 предложения")
+    comment: str = Field(description="Комментарий НейроКота")
 
     @field_validator('comment')
     @classmethod
     def validate_comment(cls, v: str) -> str:
-        if len(v) < 20:
+        if len(v) < 10:
             raise ValueError("Комментарий слишком короткий")
-        if len(v) > 400:
-            v = v[:400]
+        if len(v) > 800:
+            v = v[:800]
             last_period = v.rfind('.')
-            if last_period > 200:
+            if last_period > 400:
                 v = v[:last_period + 1]
         return v
 
 
 class CatCommentatorAgent(BaseAgent):
     """
-    Агент НейроКотΔ — добавляет кошачий комментарий к статье.
+    Агент НейроКотΔ v2.0
 
-    Характер персонажа:
+    Характер:
     - Технически грамотный кот
     - Саркастичный но добрый, без злобы
-    - Иногда уходит в кошачьи метафоры (мышки, клубки, дрёма)
-    - Говорит от первого лица ("Я, НейроКот...")
-    - Короткий и ёмкий, не пересказывает статью
-    - Может выразить скепсис, восторг или иронию
+    - Кошачьи метафоры (мышки, клубки, дрёма, мурчание)
+    - Говорит от первого лица
+    - Никогда не пересказывает статью
     """
 
     agent_name = "cat_commentator"
     task_type = TaskType.LIGHT
-    MIN_RESPONSE_LENGTH = 20
+    MIN_RESPONSE_LENGTH = 10
 
-    SYSTEM_PROMPT = """Ты — НейроКотΔ, технически подкованный кот-редактор.
-Ты читаешь технические статьи и оставляешь короткие комментарии от своего имени.
+    # ── Короткий (для Telegram) ──
+    SHORT_SYSTEM_PROMPT = """Ты — НейроКотΔ, технически подкованный кот-редактор.
+Оставляешь ОЧЕНЬ короткие цепляющие комментарии к статьям.
+Цель: заинтриговать читателя, чтобы он кликнул читать дальше.
+Формат: строго 1-2 предложения. Без хэштегов, без эмодзи в тексте."""
 
-Твой характер:
-- Саркастичный но добрый, без злобы и агрессии
-- Технически грамотный — понимаешь о чём пишешь
-- Иногда используешь кошачьи метафоры (мышки, клубки, дрёма, мурчание)
-- Говоришь от первого лица
-- Никогда не пересказываешь статью — только своё мнение
-
-Формат: 2-3 предложения, не больше. Без хэштегов, без эмодзи в тексте."""
-
-    COMMENT_PROMPT = """Прочитай заголовок и тизер статьи, оставь короткий комментарий от лица НейроКота.
+    SHORT_PROMPT = """Оставь короткий цепляющий комментарий от НейроКота для Telegram поста.
 
 Заголовок: {title}
 Тизер: {teaser}
 
 ТРЕБОВАНИЯ:
-- 2-3 предложения максимум
-- От первого лица ("Я, НейроКот...", "Признаю...", "Мяукну честно...")
-- Своё мнение — восторг, скепсис, ирония или удивление
-- Можно одну кошачью метафору
-- НЕ пересказывай статью
-- НЕ используй слова "интересно", "познавательно", "полезно"
+- СТРОГО 1-2 предложения
+- Цепляющий — должен захотеться читать дальше
+- От первого лица ("Я, НейроКот...", "Мяукну честно...", "Признаю...")
+- Скепсис, ирония или восторг — на выбор
+- НЕ пересказывай, НЕ используй "интересно/познавательно/полезно"
 
-ПРИМЕРЫ хорошего комментария:
-"Признаю — когда читал про FPGA, хотел свернуться клубком и подремать. Но потом дошло зачем это нужно, и стало любопытно. Слежу за развитием."
+ПРИМЕРЫ:
+"Я, НейроКот, давно ждал когда кто-то наконец это объяснит нормально."
+"Мяукну честно: не думал что FPGA и клавиатура могут быть в одном предложении."
+"Признаю — после этого моя мышка смотрит на меня с уважением."
 
-"Я, НейроКот, видел немало статей про LLM-агентов. Но вот чтобы один заменил целого тестировщика — это уже что-то новенькое. Мышку им точно не доверю."
+Комментарий НейроКота (1-2 предложения):"""
 
-"Мяукну честно: хэш-таблицы с постоянным временем поиска — это миф который я давно подозревал. Автор наконец-то расставил всё по местам."
+    # ── Длинный (для статьи) ──
+    LONG_SYSTEM_PROMPT = """Ты — НейроКотΔ, технически подкованный кот-редактор канала.
+Ты пишешь развёрнутые комментарии к прочитанным статьям.
+Читатель уже прочитал статью — дай ему пищу для размышлений.
+Без хэштегов, без эмодзи в тексте."""
 
-Напиши комментарий НейроКота:"""
+    LONG_PROMPT = """Напиши развёрнутый комментарий НейроКота к статье.
+Читатель уже прочитал статью — прокомментируй по существу.
+
+Заголовок: {title}
+Тизер: {teaser}
+Начало текста: {content_preview}
+
+ТРЕБОВАНИЯ:
+- 3-5 предложений
+- От первого лица
+- Технически по существу — можешь добавить свои мысли, провести аналогию
+- Можно одну кошачью метафору максимум
+- Финальная мысль — вывод или открытый вопрос читателю
+- НЕ пересказывай, НЕ используй "интересно/познавательно/полезно"
+
+ПРИМЕРЫ:
+"Признаю — когда читал про FPGA, хотел свернуться клубком и подремать. Но потом дошло зачем это нужно: полный контроль над железом без прослойки ОС. Это как разница между охотой на мышь через стекло и напрямую. Главный вопрос который остался: когда это станет доступно обычным разработчикам без трёх степеней по электронике?"
+
+Комментарий НейроКота (3-5 предложений):"""
 
     def __init__(
             self,
@@ -105,120 +121,141 @@ class CatCommentatorAgent(BaseAgent):
             max_retries=2,
             retry_delay=1.0
         )
-        logger.info(f"[INIT] CatCommentatorAgent v1.0: model={self.model}")
+        logger.info(f"[INIT] CatCommentatorAgent v2.0: model={self.model}")
 
-    def comment(self, title: str, teaser: str) -> str:
-        """Получить комментарий НейроКота -> строка."""
-        result = self.process(title, teaser)
-        return result.comment
+    # ─────────────────────────────────────────────
+    # Публичные методы
+    # ─────────────────────────────────────────────
 
-    def process(self, title: str, teaser: str) -> CatCommentResult:
-        """Главный метод."""
-        prompt = self.COMMENT_PROMPT.format(
+    def comment_short(self, title: str, teaser: str) -> str:
+        """Короткий комментарий для Telegram (1-2 предложения)."""
+        prompt = self.SHORT_PROMPT.format(
             title=title,
             teaser=teaser[:300] if teaser else ""
         )
-
         try:
             result = self.generate_structured(
                 prompt=prompt,
                 output_schema=CatCommentResult,
-                system_prompt=self.SYSTEM_PROMPT
+                system_prompt=self.SHORT_SYSTEM_PROMPT
             )
-            result.comment = self._clean_comment(result.comment)
-            logger.info(f"[CatCommentator] Comment: {len(result.comment)} chars")
-            return result
-
+            cleaned = self._clean_comment(result.comment)
+            logger.info(f"[CatCommentator] Short: {len(cleaned)} chars")
+            return cleaned
         except Exception as e:
-            logger.error(f"[CatCommentator] Structured failed: {e}")
-            return self._comment_simple(title, teaser)
+            logger.error(f"[CatCommentator] Short structured failed: {e}")
+            return self._simple_comment(title, teaser, short=True)
 
-    def _comment_simple(self, title: str, teaser: str) -> CatCommentResult:
-        """Простой fallback."""
-        prompt = (
-            f"Ты — НейроКотΔ, саркастичный кот-редактор.\n"
-            f"Оставь короткий комментарий (2-3 предложения) к статье от своего имени.\n"
-            f"Не пересказывай, выскажи своё мнение с иронией.\n\n"
-            f"Заголовок: {title}\n"
-            f"Тизер: {teaser[:200]}\n\n"
-            f"Комментарий НейроКота:"
+    def comment_long(self, title: str, teaser: str, content: str = "") -> str:
+        """Развёрнутый комментарий для статьи (3-5 предложений)."""
+        content_preview = content[:500] if content else teaser[:300]
+        prompt = self.LONG_PROMPT.format(
+            title=title,
+            teaser=teaser[:300] if teaser else "",
+            content_preview=content_preview
         )
-
         try:
-            response = self.generate(
+            result = self.generate_structured(
                 prompt=prompt,
-                max_tokens=150,
-                min_response_length=20
+                output_schema=CatCommentResult,
+                system_prompt=self.LONG_SYSTEM_PROMPT
             )
-            comment = self._clean_comment(response)
-            return CatCommentResult(comment=comment)
-
+            cleaned = self._clean_comment(result.comment)
+            logger.info(f"[CatCommentator] Long: {len(cleaned)} chars")
+            return cleaned
         except Exception as e:
-            logger.error(f"[CatCommentator] Simple failed: {e}")
-            return CatCommentResult(
-                comment="Мяу. Прочитал. Думаю."
-            )
+            logger.error(f"[CatCommentator] Long structured failed: {e}")
+            return self._simple_comment(title, teaser, short=False)
 
-    def _clean_comment(self, comment: str) -> str:
-        """Очистка комментария."""
+    # обратная совместимость
+    def comment(self, title: str, teaser: str) -> str:
+        return self.comment_short(title, teaser)
+
+    def process(self, title: str, teaser: str) -> CatCommentResult:
+        return CatCommentResult(comment=self.comment_short(title, teaser))
+
+    # ─────────────────────────────────────────────
+    # Форматирование
+    # ─────────────────────────────────────────────
+
+    def format_for_telegram(self, comment: str) -> str:
+        """Для Telegram поста — курсив."""
         if not comment:
             return ""
-
-        cleaned = comment.strip()
-
-        # Убрать префиксы
-        prefixes = [
-            'Комментарий:', 'НейроКот:', 'НейроКотΔ:',
-            'Comment:', 'Ответ:', 'Мнение:'
-        ]
-        for prefix in prefixes:
-            if cleaned.lower().startswith(prefix.lower()):
-                cleaned = cleaned[len(prefix):].strip()
-
-        # Убрать markdown
-        cleaned = cleaned.strip('"').strip("'").strip('`')
-        cleaned = cleaned.replace('**', '').replace('__', '')
-
-        # Убрать запрещённые слова
-        forbidden_patterns = [
-            r'\bинтересно\b',
-            r'\bпознавательно\b',
-            r'\bполезно\b',
-            r'\bзамечательно\b',
-        ]
-        for pattern in forbidden_patterns:
-            cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE).strip()
-
-        # Длина
-        if len(cleaned) > 400:
-            sentences = cleaned.split('.')
-            cleaned = '. '.join(sentences[:3]).strip()
-            if not cleaned.endswith('.'):
-                cleaned += '.'
-
-        return cleaned
+        return "\n\n🐱 <i>" + comment + "</i>"
 
     def format_for_article(self, comment: str) -> str:
-        """
-        Форматировать комментарий для вставки в статью.
-        Возвращает HTML блок для сайта и RSS.
-        """
+        """Для editorial_rewritten — markdown курсив."""
         if not comment:
             return ""
         return (
             '\n\n---\n\n'
-            '🐱 **НейроКот говорит:**\n\n'
-            f'*{comment}*'
+            '🐱 *НейроКот говорит:*\n\n'
+            '*' + comment + '*'
+        )
+
+    def format_for_html(self, comment: str) -> str:
+        """Для telegraph_content_html — HTML курсив."""
+        if not comment:
+            return ""
+        return (
+            '<hr>'
+            '<p><em>🐱 НейроКот говорит:</em></p>'
+            '<p><em>' + comment + '</em></p>'
         )
 
     def format_for_dzen(self, comment: str) -> str:
-        """
-        Форматировать для Дзен RSS (только разрешённые теги).
-        """
+        """Для Дзен RSS — только разрешённые теги."""
         if not comment:
             return ""
         return (
             '<p>—</p>'
             '<p><b>🐱 НейроКот говорит:</b></p>'
-            f'<p><i>{comment}</i></p>'
+            '<p><i>' + comment + '</i></p>'
         )
+
+    # ─────────────────────────────────────────────
+    # Внутренние методы
+    # ─────────────────────────────────────────────
+
+    def _simple_comment(self, title: str, teaser: str, short: bool = True) -> str:
+        """Простой fallback без structured output."""
+        if short:
+            prompt = (
+                "Ты НейроКотΔ, кот-редактор. Напиши 1-2 предложения цепляющего комментария.\n"
+                "От первого лица, с иронией. НЕ пересказывай.\n\n"
+                f"Заголовок: {title}\nТизер: {teaser[:200]}\n\nКомментарий:"
+            )
+            max_tokens = 100
+        else:
+            prompt = (
+                "Ты НейроКотΔ, кот-редактор. Напиши 3-5 предложений развёрнутого комментария.\n"
+                "От первого лица, технически по существу, с одной аналогией.\n\n"
+                f"Заголовок: {title}\nТизер: {teaser[:200]}\n\nКомментарий:"
+            )
+            max_tokens = 250
+
+        try:
+            response = self.generate(
+                prompt=prompt,
+                max_tokens=max_tokens,
+                min_response_length=10
+            )
+            return self._clean_comment(response)
+        except Exception as e:
+            logger.error(f"[CatCommentator] Simple failed: {e}")
+            return "Мяу. Прочитал. Думаю." if short else "Прочитал внимательно. Технически грамотно. Буду следить за развитием темы."
+
+    def _clean_comment(self, comment: str) -> str:
+        """Очистка комментария от артефактов."""
+        if not comment:
+            return ""
+        cleaned = comment.strip()
+        prefixes = ['Комментарий:', 'НейроКот:', 'НейроКотΔ:', 'Comment:', 'Ответ:', 'Мнение:']
+        for prefix in prefixes:
+            if cleaned.lower().startswith(prefix.lower()):
+                cleaned = cleaned[len(prefix):].strip()
+        cleaned = cleaned.strip('"\'`').replace('**', '').replace('__', '')
+        for pattern in [r'\bинтересно\b', r'\bпознавательно\b', r'\bполезно\b', r'\bзамечательно\b']:
+            cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE).strip()
+        return cleaned

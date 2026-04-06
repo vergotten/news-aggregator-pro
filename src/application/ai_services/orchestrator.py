@@ -484,13 +484,25 @@ class AIOrchestrator:
                     if cat_comment:
                         article.cat_comment = cat_comment
 
-                        # Добавляем в конец telegram_post_text если он есть
+                        # Блок для вставки в текст (markdown курсив)
+                        cat_md_block = (
+                            "\n\n---\n\n"
+                            "*🐱 НейроКот говорит:*\n\n"
+                            "*" + cat_comment + "*"
+                        )
+
+                        # Добавляем в editorial_rewritten
+                        if article.editorial_rewritten:
+                            article.editorial_rewritten = article.editorial_rewritten + cat_md_block
+
+                        # Добавляем в telegraph_content_html
+                        if article.telegraph_content_html:
+                            article.telegraph_content_html = article.telegraph_content_html + cat_md_block
+
+                        # Добавляем в telegram_post_text (HTML)
                         if article.telegram_post_text:
-                            cat_block = (
-                                "\n\n"
-                                "🐱 <i>" + cat_comment + "</i>"
-                            )
-                            article.telegram_post_text = article.telegram_post_text + cat_block
+                            cat_tg_block = "\n\n🐱 <i>" + cat_comment + "</i>"
+                            article.telegram_post_text = article.telegram_post_text + cat_tg_block
 
                         step_time = time.time() - step_start
                         stats.model_attempts.append(ModelAttempt(

@@ -485,8 +485,12 @@
                 <div class="section-header"><span class="dot"></span>🐱 НейроКот</div>
                 <div class="section-body">
                     <div class="field">
-                        <label>Комментарий кота</label>
-                        <textarea name="cat_comment" class="short" placeholder="Генерируется автоматически в пайплайне...">{{ article.cat_comment or '' }}</textarea>
+                        <label>Короткий (Telegram, 1-2 предл.)</label>
+                        <textarea name="cat_comment_short" class="short" placeholder="Генерируется автоматически...">{{ article.cat_comment_short or '' }}</textarea>
+                    </div>
+                    <div class="field">
+                        <label>Длинный (Статья, 3-5 предл.)</label>
+                        <textarea name="cat_comment" class="tall" placeholder="Генерируется автоматически...">{{ article.cat_comment or '' }}</textarea>
                     </div>
                 </div>
             </div>
