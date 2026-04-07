@@ -5,8 +5,19 @@
     <description>Curated tech news from Habr and more</description>
     <link>https://github.com</link>
     <language>ru</language>
-    <lastBuildDate>Mon, 06 Apr 2026 13:26:32 +0000</lastBuildDate>
+    <lastBuildDate>Tue, 07 Apr 2026 13:49:04 +0000</lastBuildDate>
     <generator>news-aggregator-pro/generate_rss.py</generator>
+    <item>
+      <title>ИИ и окончание эпохи интеллектуальной собственности: новые реалии авторства</title>
+      <link>https://telegra.ph/II-i-okonchanie-ehpohi-intellektualnoj-sobstvennosti-novye-realii-avtorstva-04-07</link>
+      <guid isPermaLink="false">5899855e-ecfc-45d3-9432-2c7df5e9459f</guid>
+      <description>ИИ вызывает кризис интеллектуальной собственности, меняя роль автора в культурном производстве.</description>
+      <pubDate>Sat, 04 Apr 2026 23:55:41 +0000</pubDate>
+      <category>Искусственный интеллект</category>
+      <category>Исследования и прогнозы в IT</category>
+      <category>Natural Language Processing</category>
+      <category>Машинное обучение</category>
+    </item>
     <item>
       <title>Определение характера движения автомобиля по данным пассивного измерения TPMS</title>
       <link>https://telegra.ph/Opredelenie-haraktera-dvizheniya-avtomobilya-po-dannym-passivnogo-izmereniya-TPMS-04-06</link>
