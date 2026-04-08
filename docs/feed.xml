@@ -5,8 +5,19 @@
     <description>Curated tech news from Habr and more</description>
     <link>https://github.com</link>
     <language>ru</language>
-    <lastBuildDate>Tue, 07 Apr 2026 13:49:04 +0000</lastBuildDate>
+    <lastBuildDate>Wed, 08 Apr 2026 13:50:18 +0000</lastBuildDate>
     <generator>news-aggregator-pro/generate_rss.py</generator>
+    <item>
+      <title>Пост-процессинг планов запросов с использованием Prettier в Postgres</title>
+      <link>https://telegra.ph/Post-processing-planov-zaprosov-s-ispolzovaniem-Prettier-v-Postgres-04-08</link>
+      <guid isPermaLink="false">6659b338-a56b-4732-8de1-67b5c69509a9</guid>
+      <description>Автор предлагает решение для упрощения вывода команды EXPLAIN в PostgreSQL, делая его более читабельным и сфокусированным на ключевых проблемах.</description>
+      <pubDate>Sat, 04 Apr 2026 21:12:20 +0000</pubDate>
+      <category>Блог компании Тантор Лабс</category>
+      <category>Блог компании Postgres Professional</category>
+      <category>PostgreSQL</category>
+      <category>1С</category>
+    </item>
     <item>
       <title>ИИ и окончание эпохи интеллектуальной собственности: новые реалии авторства</title>
       <link>https://telegra.ph/II-i-okonchanie-ehpohi-intellektualnoj-sobstvennosti-novye-realii-avtorstva-04-07</link>
