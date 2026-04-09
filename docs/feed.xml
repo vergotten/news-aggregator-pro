@@ -5,8 +5,17 @@
     <description>Curated tech news from Habr and more</description>
     <link>https://github.com</link>
     <language>ru</language>
-    <lastBuildDate>Wed, 08 Apr 2026 13:50:18 +0000</lastBuildDate>
+    <lastBuildDate>Thu, 09 Apr 2026 14:01:26 +0000</lastBuildDate>
     <generator>news-aggregator-pro/generate_rss.py</generator>
+    <item>
+      <title>Оптимизация интерфейса мобильных приложений с использованием Sensor API</title>
+      <link>https://telegra.ph/Optimizaciya-interfejsa-mobilnyh-prilozhenij-s-ispolzovaniem-Sensor-API-04-09</link>
+      <guid isPermaLink="false">a05d37dc-b272-44f5-9c3a-1644879f7bc3</guid>
+      <description>Рассмотрены способы использования Sensor API для интерактивного дизайна мобильных UI. Обсуждаются преимущества реакции веб-интерфейса на наклон устройства и другие сенсорные данные.</description>
+      <pubDate>Sun, 05 Apr 2026 00:24:56 +0000</pubDate>
+      <category>CSS</category>
+      <category>JavaScript</category>
+    </item>
     <item>
       <title>Пост-процессинг планов запросов с использованием Prettier в Postgres</title>
       <link>https://telegra.ph/Post-processing-planov-zaprosov-s-ispolzovaniem-Prettier-v-Postgres-04-08</link>
