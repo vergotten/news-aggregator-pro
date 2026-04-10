@@ -5,8 +5,18 @@
     <description>Curated tech news from Habr and more</description>
     <link>https://github.com</link>
     <language>ru</language>
-    <lastBuildDate>Thu, 09 Apr 2026 14:01:26 +0000</lastBuildDate>
+    <lastBuildDate>Fri, 10 Apr 2026 13:27:29 +0000</lastBuildDate>
     <generator>news-aggregator-pro/generate_rss.py</generator>
+    <item>
+      <title>Chat Mountain:WebView интеграция, аудио функционал и обновление проектного статуса</title>
+      <link>https://telegra.ph/Chat-MountainWebView-integraciya-audio-funkcional-i-obnovlenie-proektnogo-statusa-04-10</link>
+      <guid isPermaLink="false">4ef64895-6313-4342-bba4-72a6b9ade978</guid>
+      <description>Chat Mountain внедрил адаптивный интерфейс для мобильных устройств, улучшенную звуковую обработку и функцию отложенных сообщений.</description>
+      <pubDate>Sat, 04 Apr 2026 21:00:23 +0000</pubDate>
+      <category>ReactJS</category>
+      <category>Python</category>
+      <category>Мессенджеры</category>
+    </item>
     <item>
       <title>Оптимизация интерфейса мобильных приложений с использованием Sensor API</title>
       <link>https://telegra.ph/Optimizaciya-interfejsa-mobilnyh-prilozhenij-s-ispolzovaniem-Sensor-API-04-09</link>
