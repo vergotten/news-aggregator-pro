@@ -5,8 +5,17 @@
     <description>Curated tech news from Habr and more</description>
     <link>https://github.com</link>
     <language>ru</language>
-    <lastBuildDate>Mon, 20 Apr 2026 14:02:08 +0000</lastBuildDate>
+    <lastBuildDate>Tue, 21 Apr 2026 14:00:56 +0000</lastBuildDate>
     <generator>news-aggregator-pro/generate_rss.py</generator>
+    <item>
+      <title>Построение HLD ИТ-инфраструктуры: методология C4 и интеграция компонентов</title>
+      <link>https://telegra.ph/Postroenie-HLD-IT-infrastruktury-metodologiya-C4-i-integraciya-komponentov-04-21</link>
+      <guid isPermaLink="false">4ab6ba30-5976-46c5-b0ae-7362fea868d8</guid>
+      <description>ИТ-инфраструктуры проекты требуют четкого планирования для достижения желаемых результатов. Техническое задание играет ключевую роль в определении целей и задач.</description>
+      <pubDate>Sat, 18 Apr 2026 19:46:41 +0000</pubDate>
+      <category>Системное администрирование</category>
+      <category>IT-инфраструктура</category>
+    </item>
     <item>
       <title>Разоблачение новой мошеннической схемы: теперь жертвы</title>
       <link>https://telegra.ph/Razoblachenie-novoj-moshennicheskoj-shemy-teper-zhertvy-04-13</link>
