@@ -1072,17 +1072,17 @@ class ModelsConfig:
 
             # max_tokens по агенту (Gemini даёт до 8192 бесплатно)
             agent_max_tokens = {
-                "classifier": 1000,
-                "relevance": 1000,
-                "quality_validator": 1000,
-                "summarizer": 2000,
+                "classifier": 4096,
+                "relevance": 4096,
+                "quality_validator": 4096,
+                "summarizer": 4096,
                 "rewriter": 8192,
                 "style_normalizer": 8192,
-                "telegram_formatter": 4000,
+                "telegram_formatter": 4096,
                 "telegraph_formatter": 8192,
-                "image_prompt": 1000,
-                "cat_commentator": 500,
-                "seo_optimizer": 2000,
+                "image_prompt": 2048,
+                "cat_commentator": 2048,
+                "seo_optimizer": 4096,
             }
             max_tokens = agent_max_tokens.get(
                 agent_name,

@@ -1538,7 +1538,7 @@ class LLMProviderFactory:
                 # Модель определяется через env → разумный дефолт (без хардкода qwen)
                 env_models = {
                     "groq": os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
-                    "google": os.getenv("GOOGLE_MODEL", "gemini-1.5-flash"),
+                    "google": os.getenv("GOOGLE_MODEL", "gemini-2.5-flash"),
                     "ollama": os.getenv("OLLAMA_MODEL", "glm-4.7-flash:q4_K_M"),
                 }
 

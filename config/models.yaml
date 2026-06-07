@@ -14,9 +14,9 @@ defaults:
 # =============================================================================
 
 google:
-  pro_model:   "gemini-2.5-pro-preview-06-05"   # тяжёлые агенты
-  flash_model: "gemini-2.0-flash"                # основная
-  lite_model:  "gemini-2.0-flash-lite"           # классификаторы
+  pro_model:   "gemini-2.5-flash"   # тяжёлые агенты
+  flash_model: "gemini-2.5-flash"                # основная
+  lite_model:  "gemini-2.5-flash"           # классификаторы
 
   max_tokens:     8192
   context_length: 1048576    # 1M токенов
