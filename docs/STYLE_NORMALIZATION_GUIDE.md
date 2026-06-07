@@ -90,7 +90,7 @@ Kubernetes может показаться сложным на старте.
 
 ```bash
 # MODE 3 теперь использует нормализацию стиля
-docker-compose exec api python run_full_pipeline.py 10
+docker-compose exec api python scripts/pipeline/run_full_pipeline.py 10
 ```
 
 Результат сохраняется в поле: `editorial_rewritten`
@@ -99,7 +99,7 @@ docker-compose exec api python run_full_pipeline.py 10
 
 ```bash
 # Протестировать агент
-docker-compose exec api python test_style_agent.py
+docker-compose exec api python scripts/dev/test_style_agent.py
 ```
 
 Вы увидите:
@@ -293,7 +293,7 @@ orchestrator.process_article(article, normalize_style=False)
 
 ```bash
 # 1. Обработать статьи с нормализацией
-docker-compose exec api python run_full_pipeline.py 5
+docker-compose exec api python scripts/pipeline/run_full_pipeline.py 5
 
 # 2. Проверить результат
 curl http://localhost:8000/api/v1/articles/?limit=1 | jq .editorial_rewritten
@@ -302,7 +302,7 @@ curl http://localhost:8000/api/v1/articles/?limit=1 | jq .editorial_rewritten
 open http://localhost:8055
 
 # 4. Протестировать на одной статье
-docker-compose exec api python test_style_agent.py
+docker-compose exec api python scripts/dev/test_style_agent.py
 
 ГОТОВО! 🎉
 ```

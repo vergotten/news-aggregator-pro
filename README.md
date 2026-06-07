@@ -145,7 +145,7 @@ docker compose logs api -f # Логи API
 
 ```bash
 # Через CLI — одна статья
-docker compose exec api python run_full_pipeline.py --url https://habr.com/ru/news/1004288/ -p ollama --publish --verbose
+docker compose exec api python scripts/pipeline/run_full_pipeline.py --url https://habr.com/ru/news/1004288/ -p ollama --publish --verbose
 
 # Через API
 curl -X POST http://localhost:8000/api/v1/pipeline/run \
@@ -275,19 +275,19 @@ Fallback: удаление приветствий, прощаний, конве�
 
 ```bash
 # Одна статья по URL
-docker compose exec api python run_full_pipeline.py \
+docker compose exec api python scripts/pipeline/run_full_pipeline.py \
   --url https://habr.com/ru/news/1004288/ -p ollama --publish --verbose
 
 # С публикацией при любом score
-docker compose exec api python run_full_pipeline.py \
+docker compose exec api python scripts/pipeline/run_full_pipeline.py \
   --url https://habr.com/ru/articles/123456/ -p ollama --publish --min-relevance 1 --verbose
 
 # Через Supabase (из Docker)
-docker compose exec -e DATABASE_URL="postgresql://..." api python run_full_pipeline.py \
+docker compose exec -e DATABASE_URL="postgresql://..." api python scripts/pipeline/run_full_pipeline.py \
   --url https://habr.com/ru/news/1004288/ -p ollama --publish --verbose
 ```
 
-### Флаги run_full_pipeline.py
+### Флаги scripts/pipeline/run_full_pipeline.py
 
 | Флаг | Описание | По умолчанию |
 |------|----------|--------------|
@@ -307,7 +307,7 @@ docker compose exec -e DATABASE_URL="postgresql://..." api python run_full_pipel
 
 ## Обработка существующих статей
 
-`process_existing_articles.py` — AI обработка статей, уже находящихся в базе данных.
+`scripts/pipeline/process_existing_articles.py` — AI обработка статей, уже находящихся в базе данных.
 Используется для обработки статей из Supabase (спарсенных GitHub Actions).
 
 ### Использование
@@ -315,34 +315,34 @@ docker compose exec -e DATABASE_URL="postgresql://..." api python run_full_pipel
 ```bash
 # Через Docker (рекомендуется — Ollama доступен)
 docker compose exec -e DATABASE_URL="postgresql://postgres.xxx:PASS@aws-1-eu-west-1.pooler.supabase.com:6543/postgres" \
-  api python process_existing_articles.py -p ollama --limit 5
+  api python scripts/pipeline/process_existing_articles.py -p ollama --limit 5
 
 # С явным --db
-python process_existing_articles.py \
+python scripts/pipeline/process_existing_articles.py \
   --db "postgresql://postgres.xxx:PASS@aws-1-eu-west-1.pooler.supabase.com:6543/postgres" \
   -p ollama --limit 3
 
 # Конкретная статья по URL
-python process_existing_articles.py --db "..." -p ollama \
+python scripts/pipeline/process_existing_articles.py --db "..." -p ollama \
   --url https://habr.com/ru/articles/1006098/
 
 # Конкретная статья по ID
-python process_existing_articles.py --db "..." -p ollama \
+python scripts/pipeline/process_existing_articles.py --db "..." -p ollama \
   --id 550e8400-e29b-41d4-a716-446655440000
 
 # Несколько статей
-python process_existing_articles.py --db "..." -p ollama \
+python scripts/pipeline/process_existing_articles.py --db "..." -p ollama \
   --url https://habr.com/ru/articles/111/,https://habr.com/ru/articles/222/
 
 # Переобработать все за неделю
-python process_existing_articles.py --db "..." -p ollama \
+python scripts/pipeline/process_existing_articles.py --db "..." -p ollama \
   --days 7 --reprocess-all --limit 10
 
 # Локальная БД (без --db, берёт из .env)
-docker compose exec api python process_existing_articles.py -p ollama --limit 5
+docker compose exec api python scripts/pipeline/process_existing_articles.py -p ollama --limit 5
 ```
 
-### Флаги process_existing_articles.py
+### Флаги scripts/pipeline/process_existing_articles.py
 
 | Флаг | Описание | По умолчанию |
 |------|----------|--------------|
@@ -454,31 +454,31 @@ RSS доступен по: `https://username.github.io/news-aggregator-pro/feed.
 
 ## Публикация статей
 
-`publish_pending.py` — берёт обработанные статьи из Supabase и публикует.
+`scripts/pipeline/publish_pending.py` — берёт обработанные статьи из Supabase и публикует.
 
 ### Использование
 
 ```bash
 # Опубликовать все processed (score >= 7)
-python publish_pending.py
+python scripts/pipeline/publish_pending.py
 
 # Явно указать БД
-python publish_pending.py --db "postgresql://..."
+python scripts/pipeline/publish_pending.py --db "postgresql://..."
 
 # Другой порог
-python publish_pending.py --min-score 5
+python scripts/pipeline/publish_pending.py --min-score 5
 
 # Только Telegraph (без Telegram)
-python publish_pending.py --no-telegram
+python scripts/pipeline/publish_pending.py --no-telegram
 
 # Лимит публикаций
-python publish_pending.py --limit 5
+python scripts/pipeline/publish_pending.py --limit 5
 
 # Dry run (показать без публикации)
-python publish_pending.py --dry-run
+python scripts/pipeline/publish_pending.py --dry-run
 ```
 
-### Флаги publish_pending.py
+### Флаги scripts/pipeline/publish_pending.py
 
 | Флаг | Описание | По умолчанию |
 |------|----------|--------------|
@@ -499,14 +499,14 @@ python publish_pending.py --dry-run
 
 ## RSS Feed
 
-`generate_rss.py` — генерирует RSS ленту из опубликованных статей.
+`scripts/pipeline/generate_rss.py` — генерирует RSS ленту из опубликованных статей.
 
 ### Использование
 
 ```bash
-python generate_rss.py                        # docs/feed.xml, 50 статей
-python generate_rss.py --output feed.xml      # другой путь
-python generate_rss.py --limit 100            # больше статей
+python scripts/pipeline/generate_rss.py                        # docs/feed.xml, 50 статей
+python scripts/pipeline/generate_rss.py --output feed.xml      # другой путь
+python scripts/pipeline/generate_rss.py --limit 100            # больше статей
 ```
 
 RSS автоматически генерируется в publish workflow и коммитится в `docs/feed.xml`.
@@ -518,34 +518,34 @@ GitHub Pages хостит файл по адресу: `https://username.github.i
 
 ## Telegram Tool (утилита)
 
-`telegram_tool.py` — утилита для работы с Telegram ботом и БД.
+`scripts/pipeline/telegram_tool.py` — утилита для работы с Telegram ботом и БД.
 
 ### Команды
 
 ```bash
 # Проверить подключение бота, канала, БД
-python telegram_tool.py status
+python scripts/pipeline/telegram_tool.py status
 
 # Отправить тестовое сообщение в канал
-python telegram_tool.py test
+python scripts/pipeline/telegram_tool.py test
 
 # Отправить форматированный пост
-python telegram_tool.py post --title "AI новости" --body "OpenAI выпустил GPT-5" \
+python scripts/pipeline/telegram_tool.py post --title "AI новости" --body "OpenAI выпустил GPT-5" \
   --link "https://example.com" --tags "ai,openai"
 
 # Показать статьи из БД
-python telegram_tool.py list                          # processed
-python telegram_tool.py list --status pending --limit 20
+python scripts/pipeline/telegram_tool.py list                          # processed
+python scripts/pipeline/telegram_tool.py list --status pending --limit 20
 
 # Отправить конкретную статью из БД
-python telegram_tool.py send --id 0929dd03
+python scripts/pipeline/telegram_tool.py send --id 0929dd03
 
 # Отправить все processed статьи
-python telegram_tool.py send-all --min-score 5 --limit 3
+python scripts/pipeline/telegram_tool.py send-all --min-score 5 --limit 3
 
 # С явным указанием БД
-python telegram_tool.py --db "postgresql://..." status
-python telegram_tool.py --db "postgresql://..." list --status pending
+python scripts/pipeline/telegram_tool.py --db "postgresql://..." status
+python scripts/pipeline/telegram_tool.py --db "postgresql://..." list --status pending
 ```
 
 Скрипт автоматически читает `.env` для токенов и DATABASE_URL.
@@ -700,13 +700,17 @@ news-aggregator-pro/
 │   ├── app.py
 │   ├── settings_page.py
 │   └── models.py
-├── run_full_pipeline.py               # Полный конвейер (parse + AI + publish)
-├── run_scraper.py                     # Парсер (--url, --feed)
-├── process_existing_articles.py       # AI обработка из БД
-├── publish_pending.py                 # Публикация processed → Telegraph + Telegram
-├── generate_rss.py                    # Генерация RSS feed
-├── cleanup_articles.py                # Очистка старых статей
-├── telegram_tool.py                   # Утилита Telegram бота
+├── scripts/
+│   ├── pipeline/                      # Точки входа конвейера (запускаются через docker-compose exec)
+│   │   ├── run_full_pipeline.py       # Полный конвейер (parse + AI + publish)
+│   │   ├── run_scraper.py             # Парсер (--url, --feed)
+│   │   ├── process_existing_articles.py # AI обработка из БД
+│   │   ├── publish_pending.py         # Публикация processed → Telegraph + Telegram
+│   │   ├── generate_rss.py            # Генерация RSS feed
+│   │   ├── cleanup_articles.py        # Очистка старых статей
+│   │   └── telegram_tool.py           # Утилита Telegram бота
+│   ├── ops/                           # Docker/инфраструктурные shell-скрипты
+│   └── dev/                           # Инструменты разработчика (show_config, git_push, ...)
 ├── requirements-actions.txt           # Зависимости для GitHub Actions
 ├── supabase_migration.sql             # SQL миграция для Supabase
 ├── docker-compose.yml
@@ -795,8 +799,8 @@ docker compose logs api -f | grep -E "(ERROR|WARNING)"            # Ошибки
 - [x] GitHub Actions: автопарсинг каждые 2 дня
 - [x] GitHub Actions: автопубликация ежедневно
 - [x] RSS feed (GitHub Pages)
-- [x] telegram_tool.py (статус, тест, отправка из БД)
-- [x] process_existing_articles.py (AI из Supabase)
+- [x] scripts/pipeline/telegram_tool.py (статус, тест, отправка из БД)
+- [x] scripts/pipeline/process_existing_articles.py (AI из Supabase)
 - [ ] Веб-дашборд (GUI) с tray icon
 - [ ] Миграция Qdrant → pgvector (Supabase)
 - [ ] Prometheus метрики

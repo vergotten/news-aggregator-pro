@@ -50,9 +50,9 @@ jobs:
           echo "🚀 Парсинг: limit=$LIMIT, hubs=$HUBS"
           
           if [ -n "$HUBS" ]; then
-            python run_scraper.py --feed "$LIMIT" --hubs "$HUBS" --verbose
+            python scripts/pipeline/run_scraper.py --feed "$LIMIT" --hubs "$HUBS" --verbose
           else
-            python run_scraper.py --feed "$LIMIT" --verbose
+            python scripts/pipeline/run_scraper.py --feed "$LIMIT" --verbose
           fi
 
       - name: Cleanup old articles
@@ -60,7 +60,7 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           echo "🧹 Очистка старых статей"
-          python cleanup_articles.py --published-days 30 --unprocessed-days 7 --verbose
+          python scripts/pipeline/cleanup_articles.py --published-days 30 --unprocessed-days 7 --verbose
 
       - name: Health check (keep Supabase alive)
         env:

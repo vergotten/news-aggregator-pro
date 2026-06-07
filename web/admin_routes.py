@@ -398,7 +398,7 @@ async def sync_telegraph(request: Request, article_id: str):
     if not token:
         raise HTTPException(
             status_code=400,
-            detail="Telegraph токен не найден в metadata. Статья должна быть опубликована через publish_pending.py хотя бы один раз после этого обновления."
+            detail="Telegraph токен не найден в metadata. Статья должна быть опубликована через scripts/pipeline/publish_pending.py хотя бы один раз после этого обновления."
         )
 
     # Достаём path из telegraph_url (https://telegra.ph/slug-01-01 → slug-01-01)

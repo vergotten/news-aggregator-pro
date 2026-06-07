@@ -83,16 +83,16 @@ pip install telethon==1.35.0
 
 ```bash
 # Опубликовать 5 топ статей
-docker-compose exec api python publish_to_telegram.py 5
+docker-compose exec api python scripts/pipeline/publish_to_telegram.py 5
 
 # С параметрами:
-# publish_to_telegram.py [количество] [мин_релевантность] [изображения] [задержка]
+# scripts/pipeline/publish_to_telegram.py [количество] [мин_релевантность] [изображения] [задержка]
 
 # Примеры:
-docker-compose exec api python publish_to_telegram.py 10            # 10 статей
-docker-compose exec api python publish_to_telegram.py 5 8.0         # мин. оценка 8
-docker-compose exec api python publish_to_telegram.py 5 7.0 false   # без картинок
-docker-compose exec api python publish_to_telegram.py 5 7.0 true 120  # задержка 120сек
+docker-compose exec api python scripts/pipeline/publish_to_telegram.py 10            # 10 статей
+docker-compose exec api python scripts/pipeline/publish_to_telegram.py 5 8.0         # мин. оценка 8
+docker-compose exec api python scripts/pipeline/publish_to_telegram.py 5 7.0 false   # без картинок
+docker-compose exec api python scripts/pipeline/publish_to_telegram.py 5 7.0 true 120  # задержка 120сек
 ```
 
 ### Вывод:
@@ -199,7 +199,7 @@ async def publish():
 
 ```bash
 # Публиковать каждый час
-0 * * * * cd /path/to/project && docker-compose exec api python publish_to_telegram.py 5 >> logs/telegram.log 2>&1
+0 * * * * cd /path/to/project && docker-compose exec api python scripts/pipeline/publish_to_telegram.py 5 >> logs/telegram.log 2>&1
 ```
 
 ### systemd Timer (Linux)
@@ -223,7 +223,7 @@ WantedBy=timers.target
 2. Trigger: Hourly
 3. Action: Run Program
    - Program: `docker-compose`
-   - Arguments: `exec api python publish_to_telegram.py 5`
+   - Arguments: `exec api python scripts/pipeline/publish_to_telegram.py 5`
    - Start in: `C:\path\to\project`
 
 ---
@@ -234,15 +234,15 @@ WantedBy=timers.target
 
 ```bash
 # Только топовые (8+)
-python publish_to_telegram.py 10 8.0
+python scripts/pipeline/publish_to_telegram.py 10 8.0
 
 # Средние и выше (6+)
-python publish_to_telegram.py 20 6.0
+python scripts/pipeline/publish_to_telegram.py 20 6.0
 ```
 
 ### По Типу
 
-Отредактируйте `publish_to_telegram.py`:
+Отредактируйте `scripts/pipeline/publish_to_telegram.py`:
 
 ```python
 # Только новости
@@ -268,10 +268,10 @@ filtered = [
 
 ```bash
 # С изображениями
-python publish_to_telegram.py 5 7.0 true
+python scripts/pipeline/publish_to_telegram.py 5 7.0 true
 
 # Без изображений
-python publish_to_telegram.py 5 7.0 false
+python scripts/pipeline/publish_to_telegram.py 5 7.0 false
 ```
 
 ### Ограничения Telegram
@@ -340,7 +340,7 @@ TELEGRAM_PHONE=+1 (234) 567-89-00
 При первом запуске попросит **код подтверждения**:
 
 ```bash
-docker-compose exec api python publish_to_telegram.py 1
+docker-compose exec api python scripts/pipeline/publish_to_telegram.py 1
 
 # Введите код из Telegram
 # Если включена 2FA - введите пароль
@@ -385,7 +385,7 @@ stats = await publisher.publish_batch(articles, channel)
 ```bash
 # Создайте тестовый канал
 # Публикуйте туда с delay=5
-python publish_to_telegram.py 3 5.0 true 5
+python scripts/pipeline/publish_to_telegram.py 3 5.0 true 5
 ```
 
 ---
@@ -394,16 +394,16 @@ python publish_to_telegram.py 3 5.0 true 5
 
 ```bash
 # 1. Спарсить статьи
-docker-compose exec api python run_scraper.py 20
+docker-compose exec api python scripts/pipeline/run_scraper.py 20
 
 # 2. Обработать AI
-docker-compose exec api python run_full_pipeline.py 20
+docker-compose exec api python scripts/pipeline/run_full_pipeline.py 20
 
 # 3. Проверить в Directus
 open http://localhost:8055
 
 # 4. Опубликовать топовые в Telegram
-docker-compose exec api python publish_to_telegram.py 5 8.0
+docker-compose exec api python scripts/pipeline/publish_to_telegram.py 5 8.0
 
 # Готово! 🚀
 ```
@@ -455,5 +455,5 @@ await publisher.disconnect()
 **Запустите прямо сейчас:**
 
 ```bash
-docker-compose exec api python publish_to_telegram.py 5
+docker-compose exec api python scripts/pipeline/publish_to_telegram.py 5
 ```

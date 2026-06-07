@@ -640,17 +640,17 @@ if __name__ == '__main__':
 # =================================================================
 #
 # Обработать 2 статьи из Supabase через Ollama:
-# python process_existing_articles.py --db "postgresql://postgres.xxx:PASS@aws-1-eu-west-1.pooler.supabase.com:6543/postgres" -p ollama --limit 2
+# python scripts/pipeline/process_existing_articles.py --db "postgresql://postgres.xxx:PASS@aws-1-eu-west-1.pooler.supabase.com:6543/postgres" -p ollama --limit 2
 #
 # Или через env:
-# DATABASE_URL="postgresql://..." python process_existing_articles.py -p ollama --limit 3
+# DATABASE_URL="postgresql://..." python scripts/pipeline/process_existing_articles.py -p ollama --limit 3
 #
 # Через Docker (локальная БД):
-# docker compose exec api python process_existing_articles.py -p ollama --limit 5
+# docker compose exec api python scripts/pipeline/process_existing_articles.py -p ollama --limit 5
 #
 # Конкретная статья:
-# python process_existing_articles.py --db "..." -p ollama --url https://habr.com/ru/articles/1006098/
+# python scripts/pipeline/process_existing_articles.py --db "..." -p ollama --url https://habr.com/ru/articles/1006098/
 #
 # Переобработать всё:
-# python process_existing_articles.py --db "..." -p ollama --reprocess-all --limit 10
+# python scripts/pipeline/process_existing_articles.py --db "..." -p ollama --reprocess-all --limit 10
 # =================================================================

@@ -11,8 +11,8 @@ Cleanup Articles v1.0
   4. articles_archive хранит URL для проверки дубликатов при парсинге
 
 Запуск:
-  python cleanup_articles.py --published-days 30 --unprocessed-days 7
-  python cleanup_articles.py --dry-run  # показать что будет удалено
+  python scripts/pipeline/cleanup_articles.py --published-days 30 --unprocessed-days 7
+  python scripts/pipeline/cleanup_articles.py --dry-run  # показать что будет удалено
 """
 
 import os

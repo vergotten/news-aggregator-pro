@@ -1277,6 +1277,6 @@ if __name__ == '__main__':
 
 # docker compose exec postgres psql -U newsaggregator -d news_aggregator -c "DELETE FROM articles WHERE url LIKE '%1004288%'"
 #
-# docker compose exec api python run_full_pipeline.py --url https://habr.com/ru/news/1004288/ -p ollama --publish --verbose
+# docker compose exec api python scripts/pipeline/run_full_pipeline.py --url https://habr.com/ru/news/1004288/ -p ollama --publish --verbose
 
-# docker compose exec api python run_full_pipeline.py --url https://habr.com/ru/articles/1006098/ -p ollama --publish --min-relevance 1 --verbose
+# docker compose exec api python scripts/pipeline/run_full_pipeline.py --url https://habr.com/ru/articles/1006098/ -p ollama --publish --min-relevance 1 --verbose

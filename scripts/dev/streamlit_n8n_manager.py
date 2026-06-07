@@ -1,4 +1,4 @@
-# streamlit_n8n_manager.py
+# scripts/dev/streamlit_n8n_manager.py
 import streamlit as st
 import pandas as pd
 import plotly.express as px

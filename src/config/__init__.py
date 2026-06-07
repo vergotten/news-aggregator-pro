@@ -25,7 +25,7 @@ from .models_config import (
     RetryStrategy,
 )
 
-# PipelineConfig is defined in run_full_pipeline.py, not here
+# PipelineConfig is defined in scripts/pipeline/run_full_pipeline.py, not here
 __all__ = [
     "get_models_config",
     "reset_models_config",

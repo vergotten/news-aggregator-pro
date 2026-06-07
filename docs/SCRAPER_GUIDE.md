@@ -6,11 +6,11 @@
 
 ```bash
 # Запустить парсер Habr (10 статей)
-python run_scraper.py
+python scripts/pipeline/run_scraper.py
 
 # С параметрами
-python run_scraper.py 50                    # 50 статей
-python run_scraper.py 30 "python,devops"    # 30 статей из хабов
+python scripts/pipeline/run_scraper.py 50                    # 50 статей
+python scripts/pipeline/run_scraper.py 30 "python,devops"    # 30 статей из хабов
 ```
 
 ### Вариант 2: CLI с Rich Progress
@@ -20,18 +20,18 @@ python run_scraper.py 30 "python,devops"    # 30 статей из хабов
 pip install click rich
 
 # Запустить через CLI
-python cli.py scrape habr --limit 20
-python cli.py scrape habr --limit 50 --hubs "python,machine_learning"
+python scripts/pipeline/cli.py scrape habr --limit 20
+python scripts/pipeline/cli.py scrape habr --limit 50 --hubs "python,machine_learning"
 ```
 
 ### Вариант 3: Через Docker
 
 ```bash
 # Запустить в контейнере
-docker-compose exec api python run_scraper.py 20
+docker-compose exec api python scripts/pipeline/run_scraper.py 20
 
 # Или через CLI
-docker-compose exec api python cli.py scrape habr --limit 30
+docker-compose exec api python scripts/pipeline/cli.py scrape habr --limit 30
 ```
 
 ---
@@ -67,13 +67,13 @@ pip install -r requirements.txt
 
 ```bash
 # Базовый запуск (10 статей)
-python run_scraper.py
+python scripts/pipeline/run_scraper.py
 
 # 50 статей
-python run_scraper.py 50
+python scripts/pipeline/run_scraper.py 50
 
 # 30 статей из конкретных хабов
-python run_scraper.py 30 "python,devops,docker"
+python scripts/pipeline/run_scraper.py 30 "python,devops,docker"
 ```
 
 **Пример вывода:**
@@ -93,13 +93,13 @@ python run_scraper.py 30 "python,devops,docker"
 
 ```bash
 # Базовый запуск
-python cli.py scrape habr --limit 10
+python scripts/pipeline/cli.py scrape habr --limit 10
 
 # С фильтром по хабам
-python cli.py scrape habr --limit 50 --hubs "python,javascript"
+python scripts/pipeline/cli.py scrape habr --limit 50 --hubs "python,javascript"
 
 # Только из хаба Python
-python cli.py scrape habr --limit 20 --hubs "python"
+python scripts/pipeline/cli.py scrape habr --limit 20 --hubs "python"
 ```
 
 **Пример вывода:**
@@ -121,13 +121,13 @@ python cli.py scrape habr --limit 20 --hubs "python"
 
 ```bash
 # Запустить в существующем контейнере
-docker-compose exec api python run_scraper.py 15
+docker-compose exec api python scripts/pipeline/run_scraper.py 15
 
 # С хабами
-docker-compose exec api python run_scraper.py 30 "python,devops"
+docker-compose exec api python scripts/pipeline/run_scraper.py 30 "python,devops"
 
 # Через CLI
-docker-compose exec api python cli.py scrape habr --limit 25
+docker-compose exec api python scripts/pipeline/cli.py scrape habr --limit 25
 ```
 
 ### 4. Программный Запуск (Python API)
@@ -190,13 +190,13 @@ curl "http://localhost:8000/api/v1/articles/?limit=5"
 
 ```bash
 # 100 статей
-python run_scraper.py 100
+python scripts/pipeline/run_scraper.py 100
 
 # Из топ хабов
-python run_scraper.py 50 "python,javascript,devops,docker,kubernetes"
+python scripts/pipeline/run_scraper.py 50 "python,javascript,devops,docker,kubernetes"
 
 # Только Python
-python run_scraper.py 30 "python"
+python scripts/pipeline/run_scraper.py 30 "python"
 ```
 
 ---
@@ -308,7 +308,7 @@ import logging
 logging.basicConfig(level=logging.DEBUG)
 
 # Запустить парсер
-python run_scraper.py 10
+python scripts/pipeline/run_scraper.py 10
 ```
 
 ### Метрики
@@ -333,10 +333,10 @@ print(f"Ошибок: {results['errors']}")
 crontab -e
 
 # Парсить каждый час
-0 * * * * cd /path/to/project && python run_scraper.py 20 >> /var/log/scraper.log 2>&1
+0 * * * * cd /path/to/project && python scripts/pipeline/run_scraper.py 20 >> /var/log/scraper.log 2>&1
 
 # Парсить каждые 6 часов
-0 */6 * * * cd /path/to/project && python run_scraper.py 50 "python,devops"
+0 */6 * * * cd /path/to/project && python scripts/pipeline/run_scraper.py 50 "python,devops"
 ```
 
 ### Systemd Service (Linux)
@@ -351,7 +351,7 @@ After=network.target
 Type=simple
 User=www-data
 WorkingDirectory=/path/to/project
-ExecStart=/usr/bin/python3 run_scraper.py 30
+ExecStart=/usr/bin/python3 scripts/pipeline/run_scraper.py 30
 Restart=always
 RestartSec=3600
 
@@ -372,7 +372,7 @@ sudo systemctl enable news-scraper
 1. Откройте http://localhost:5678
 2. Создайте workflow:
    - Schedule Trigger (каждый час)
-   - Execute Command: `python run_scraper.py 20`
+   - Execute Command: `python scripts/pipeline/run_scraper.py 20`
 3. Активируйте workflow
 
 ---
@@ -407,10 +407,10 @@ class MediumScraperService(BaseScraper):
 - [ ] PostgreSQL запущен
 - [ ] Зависимости установлены (`pip install -r requirements.txt`)
 - [ ] Проверено подключение к БД
-- [ ] Запущен первый парсинг (`python run_scraper.py`)
+- [ ] Запущен первый парсинг (`python scripts/pipeline/run_scraper.py`)
 - [ ] Проверены результаты в БД
 - [ ] Настроена автоматизация (опционально)
 
 **Готово! 🎉**
 
-Начните с: `python run_scraper.py 10`
+Начните с: `python scripts/pipeline/run_scraper.py 10`

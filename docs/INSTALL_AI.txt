@@ -31,7 +31,7 @@
 - ❌ Без LangChain features
 
 Команды работают БЕЗ изменений:
-   docker-compose exec api python process_articles.py 5
+   docker-compose exec api python scripts/pipeline/process_articles.py 5
 
 ═══════════════════════════════════════════════════════════════════
 

@@ -73,7 +73,7 @@ async def publish_articles(
         if not filtered:
             print("❌ Нет статей для публикации")
             print(f"   Проверьте что есть статьи с relevance_score >= {min_relevance}")
-            print("   Запустите: docker-compose exec api python run_full_pipeline.py 10")
+            print("   Запустите: docker-compose exec api python scripts/pipeline/run_full_pipeline.py 10")
             return
         
         print(f"📊 Найдено статей: {len(filtered)}\n")

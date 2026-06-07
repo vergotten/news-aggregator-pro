@@ -1,77 +1,66 @@
 #!/bin/bash
 
 echo "╔══════════════════════════════════════════════════════════════════╗"
-echo "║              🧹 ПОЛНАЯ ОЧИСТКА DOCKER                           ║"
+echo "║         🔨 ПОЛНАЯ ПЕРЕСБОРКА И ЗАПУСК                          ║"
 echo "╚══════════════════════════════════════════════════════════════════╝"
 echo ""
-echo "⚠️  ВНИМАНИЕ: Это удалит ВСЁ в Docker:"
-echo "   - Все контейнеры (работающие и остановленные)"
-echo "   - Все образы"
-echo "   - Все volumes (включая данные БД!)"
-echo "   - Все сети"
-echo "   - Весь build cache"
-echo ""
-read -p "Продолжить? (yes/no): " -r
-echo ""
-
-if [[ ! $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
-    echo "Отменено"
-    exit 0
-fi
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "🛑 Шаг 1: Остановка всех контейнеров"
+echo "🛑 Шаг 1: Остановка существующих контейнеров"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 docker-compose down -v
-docker stop $(docker ps -aq) 2>/dev/null
 echo "✅ Контейнеры остановлены"
 echo ""
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "🗑️  Шаг 2: Удаление всех контейнеров"
+echo "🔨 Шаг 2: Сборка образов (без кэша)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-docker rm -f $(docker ps -aq) 2>/dev/null
-echo "✅ Контейнеры удалены"
+docker-compose build --no-cache --pull
+echo "✅ Образы собраны"
 echo ""
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "🖼️  Шаг 3: Удаление всех образов"
+echo "🚀 Шаг 3: Запуск с force-recreate"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-docker rmi -f $(docker images -aq) 2>/dev/null
-echo "✅ Образы удалены"
+docker-compose up -d --force-recreate --remove-orphans
+echo "✅ Контейнеры запущены"
 echo ""
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "💾 Шаг 4: Удаление всех volumes"
+echo "⏳ Шаг 4: Ожидание готовности сервисов (30 сек)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-docker volume rm $(docker volume ls -q) 2>/dev/null
-echo "✅ Volumes удалены"
+sleep 30
+echo "✅ Сервисы должны быть готовы"
 echo ""
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "🌐 Шаг 5: Удаление всех сетей"
+echo "📊 Шаг 5: Статус контейнеров"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-docker network prune -f
-echo "✅ Сети удалены"
+docker-compose ps
 echo ""
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "🗑️  Шаг 6: System prune (всё остальное + build cache)"
+echo "🔍 Шаг 6: Проверка здоровья сервисов"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-docker system prune -a -f --volumes
-echo "✅ System prune завершён"
+echo "PostgreSQL:"
+docker-compose exec -T postgres pg_isready 2>/dev/null && echo "✅ Ready" || echo "❌ Not ready"
 echo ""
-
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "📊 Шаг 7: Проверка освобождённого места"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-docker system df
+echo "API Health:"
+curl -s http://localhost:8000/health 2>/dev/null && echo "✅ Ready" || echo "❌ Not ready"
 echo ""
 
 echo "════════════════════════════════════════════════════════════════════"
-echo "✅ ОЧИСТКА ЗАВЕРШЕНА!"
+echo "✅ REBUILD ЗАВЕРШЁН!"
 echo "════════════════════════════════════════════════════════════════════"
 echo ""
-echo "Docker полностью очищен. Теперь можно запустить rebuild:"
-echo "   ./docker_rebuild.sh"
+echo "🌐 Доступные сервисы:"
+echo "   API:      http://localhost:8000"
+echo "   Docs:     http://localhost:8000/docs"
+echo "   Editor:   http://localhost:8000/editor"
+echo "   Directus: http://localhost:8055"
+echo "   Qdrant:   http://localhost:6333"
+echo ""
+echo "📋 Следующие шаги:"
+echo "   1. Установить модели: scripts/ops/install_models.sh"
+echo "   2. Запустить парсинг: docker-compose exec api python scripts/pipeline/run_full_pipeline.py 10"
 echo ""

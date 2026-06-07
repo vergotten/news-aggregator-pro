@@ -3,8 +3,8 @@
 CLI для запуска парсеров.
 
 Использование:
-    python cli.py scrape habr --limit 10
-    python cli.py scrape telegram --channels "@tech_news"
+    python scripts/pipeline/cli.py scrape habr --limit 10
+    python scripts/pipeline/cli.py scrape telegram --channels "@tech_news"
 """
 
 import asyncio
@@ -35,8 +35,8 @@ async def habr(limit: int, hubs: str):
     Запустить парсер Habr.
     
     Примеры:
-        python cli.py scrape habr --limit 20
-        python cli.py scrape habr --limit 50 --hubs "python,devops"
+        python scripts/pipeline/cli.py scrape habr --limit 20
+        python scripts/pipeline/cli.py scrape habr --limit 50 --hubs "python,devops"
     """
     console.print(f"\n🚀 [bold green]Запуск Habr парсера[/bold green]")
     console.print(f"Лимит: {limit}")
@@ -71,7 +71,7 @@ async def telegram(channels: str, limit: int):
     Запустить парсер Telegram.
     
     Примеры:
-        python cli.py scrape telegram --channels "@tech_news,@python_news" --limit 50
+        python scripts/pipeline/cli.py scrape telegram --channels "@tech_news,@python_news" --limit 50
     """
     console.print(f"\n🚀 [bold green]Запуск Telegram парсера[/bold green]")
     console.print(f"Каналы: {channels}")

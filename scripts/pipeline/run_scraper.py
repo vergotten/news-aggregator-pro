@@ -354,7 +354,7 @@ async def run_habr_scraper_by_urls(urls: List[str], verbose: bool = False, save:
 
     if stats.get('saved', 0) > 0 or (not save and stats['scraped'] > 0):
         print(f"\n💡 Для AI обработки:")
-        print(f"   python run_full_pipeline.py --url {','.join(urls[:3])}")
+        print(f"   python scripts/pipeline/run_full_pipeline.py --url {','.join(urls[:3])}")
 
     print()
     return stats
@@ -403,7 +403,7 @@ async def run_habr_scraper(limit: int = 10, hubs: str = "", verbose: bool = Fals
 
     if results['saved'] > 0:
         print(f"\n💡 Для AI обработки:")
-        print(f"   python run_full_pipeline.py {results['saved']} --provider groq")
+        print(f"   python scripts/pipeline/run_full_pipeline.py {results['saved']} --provider groq")
 
     print()
 
@@ -560,7 +560,7 @@ async def run_habr_feed(limit: int = 50, hubs: str = "", verbose: bool = False):
 
     if stats['saved'] > 0:
         print(f"\n💡 Для AI обработки:")
-        print(f"   python process_existing_articles.py --limit {stats['saved']} --provider ollama")
+        print(f"   python scripts/pipeline/process_existing_articles.py --limit {stats['saved']} --provider ollama")
 
     print()
     return stats

@@ -224,7 +224,7 @@ if [ "$PG_COUNT" = "0" ] && [ "$QDRANT_COUNT" = "0" ] && [ "$TABLES" -ge 2 ]; th
     echo "================================================================================"
     echo ""
     echo "Готово к обработке статей:"
-    echo "  docker-compose exec api python run_full_pipeline.py 10"
+    echo "  docker-compose exec api python scripts/pipeline/run_full_pipeline.py 10"
     echo ""
 else
     echo "================================================================================"

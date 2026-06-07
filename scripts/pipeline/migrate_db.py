@@ -154,7 +154,7 @@ async def run_migration():
     Запуск:
         docker-compose exec api python -m src.infrastructure.persistence.migration_add_fields
     Или:
-        docker-compose exec api python migrate_db.py
+        docker-compose exec api python scripts/pipeline/migrate_db.py
     """
     try:
         import asyncpg

@@ -69,7 +69,7 @@ docker-compose exec ollama ollama pull deepseek-r1:20b
 
 ```bash
 # Запустить скрипт
-./install_models.sh
+scripts/ops/install_models.sh
 
 # Он установит:
 # 1. mistral:latest
@@ -258,13 +258,13 @@ docker-compose exec ollama ollama list
 
 ```bash
 # 1. Установить модели
-./install_models.sh
+scripts/ops/install_models.sh
 
 # 2. Проверить
 docker-compose exec ollama ollama list
 
 # 3. Запустить тест
-docker-compose exec api python run_full_pipeline.py 1
+docker-compose exec api python scripts/pipeline/run_full_pipeline.py 1
 
 # 4. Готово! 🚀
 ```

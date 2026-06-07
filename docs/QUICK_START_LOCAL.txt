@@ -6,7 +6,7 @@
 
 Ошибка: ModuleNotFoundError: No module named 'asyncpg'
 
-Причина: run_scraper.py требует прямого подключения к PostgreSQL
+Причина: scripts/pipeline/run_scraper.py требует прямого подключения к PostgreSQL
 
 ═══════════════════════════════════════════════════════════════════
 
@@ -83,7 +83,7 @@ API должен быть запущен!
    ✅ Через REST API
 
 2. ВНУТРИ Docker:
-   docker-compose exec api python run_scraper.py 20
+   docker-compose exec api python scripts/pipeline/run_scraper.py 20
    
    ✅ Прямой доступ к БД
    ✅ Все зависимости есть

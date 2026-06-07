@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-publish_pending.py v1.0
+scripts/pipeline/publish_pending.py v1.0
 
 Публикация обработанных статей из Supabase → Telegraph → Telegram.
 
@@ -17,19 +17,19 @@ publish_pending.py v1.0
 
 Использование:
     # Опубликовать все обработанные (score >= 7)
-    python publish_pending.py
+    python scripts/pipeline/publish_pending.py
 
     # С другим порогом
-    python publish_pending.py --min-score 5
+    python scripts/pipeline/publish_pending.py --min-score 5
 
     # Только Telegraph (без Telegram)
-    python publish_pending.py --no-telegram
+    python scripts/pipeline/publish_pending.py --no-telegram
 
     # Лимит публикаций
-    python publish_pending.py --limit 5
+    python scripts/pipeline/publish_pending.py --limit 5
 
     # Dry run (показать что будет опубликовано)
-    python publish_pending.py --dry-run
+    python scripts/pipeline/publish_pending.py --dry-run
 
 Зависимости:
     pip install psycopg2-binary requests aiohttp
@@ -582,7 +582,7 @@ def main():
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    logger.info(f"publish_pending.py v1.0 | score >= {args.min_score} | limit={args.limit}")
+    logger.info(f"scripts/pipeline/publish_pending.py v1.0 | score >= {args.min_score} | limit={args.limit}")
     asyncio.run(publish_articles(
         min_score=args.min_score,
         limit=args.limit,

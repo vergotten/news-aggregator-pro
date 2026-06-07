@@ -60,7 +60,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          python publish_pending.py \
+          python scripts/pipeline/publish_pending.py \
             --min-score ${{ github.event.inputs.min_score || '5' }} \
             --limit ${{ github.event.inputs.limit || '1' }} \
             ${{ github.event.inputs.no_telegram == 'true' && '--no-telegram' || '' }} \
@@ -72,7 +72,7 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          python generate_rss.py \
+          python scripts/pipeline/generate_rss.py \
             --output docs/feed.xml \
             --limit 50 \
             --verbose

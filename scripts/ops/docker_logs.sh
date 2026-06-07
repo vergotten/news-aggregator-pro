@@ -10,13 +10,13 @@ if [ -z "$1" ]; then
     docker-compose ps --services
     echo ""
     echo "Использование:"
-    echo "   ./docker_logs.sh [service]"
-    echo "   ./docker_logs.sh all         - все логи"
+    echo "   scripts/ops/docker_logs.sh [service]"
+    echo "   scripts/ops/docker_logs.sh all         - все логи"
     echo ""
     echo "Примеры:"
-    echo "   ./docker_logs.sh api"
-    echo "   ./docker_logs.sh postgres"
-    echo "   ./docker_logs.sh ollama"
+    echo "   scripts/ops/docker_logs.sh api"
+    echo "   scripts/ops/docker_logs.sh postgres"
+    echo "   scripts/ops/docker_logs.sh ollama"
     exit 0
 fi
 

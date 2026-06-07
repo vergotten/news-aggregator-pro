@@ -34,10 +34,10 @@ MODE 3: FULL PIPELINE 🚀
 
 ```bash
 # В Docker
-docker-compose exec api python run_scraper.py 20 "python,devops"
+docker-compose exec api python scripts/pipeline/run_scraper.py 20 "python,devops"
 
 # Локально (если установлены зависимости)
-python run_scraper.py 20 "python,devops"
+python scripts/pipeline/run_scraper.py 20 "python,devops"
 ```
 
 ### Результат:
@@ -60,10 +60,10 @@ python run_scraper.py 20 "python,devops"
 
 ```bash
 # Обработать 10 необработанных статей
-docker-compose exec api python process_articles.py 10
+docker-compose exec api python scripts/pipeline/process_articles.py 10
 
 # Обработать все pending
-docker-compose exec api python process_articles.py 1000
+docker-compose exec api python scripts/pipeline/process_articles.py 1000
 ```
 
 ### Что делает:
@@ -114,10 +114,10 @@ docker-compose exec api python process_articles.py 1000
 
 ```bash
 # 20 статей с полной обработкой
-docker-compose exec api python run_full_pipeline.py 20 "python,devops"
+docker-compose exec api python scripts/pipeline/run_full_pipeline.py 20 "python,devops"
 
 # 50 статей, все хабы
-docker-compose exec api python run_full_pipeline.py 50
+docker-compose exec api python scripts/pipeline/run_full_pipeline.py 50
 ```
 
 ### Что делает:
@@ -229,27 +229,27 @@ docker-compose exec ollama ollama list
 
 ```bash
 # Утром: собрать 100 статей (быстро)
-docker-compose exec api python run_scraper.py 100
+docker-compose exec api python scripts/pipeline/run_scraper.py 100
 
 # Вечером: обработать через AI (медленно)
-docker-compose exec api python process_articles.py 100
+docker-compose exec api python scripts/pipeline/process_articles.py 100
 ```
 
 ### Сценарий 2: Полный Production Pipeline
 
 ```bash
 # Раз в час через cron
-0 * * * * cd /path && docker-compose exec -T api python run_full_pipeline.py 20
+0 * * * * cd /path && docker-compose exec -T api python scripts/pipeline/run_full_pipeline.py 20
 ```
 
 ### Сценарий 3: Эксперименты с AI
 
 ```bash
 # 1. Собрать тестовый набор
-docker-compose exec api python run_scraper.py 10
+docker-compose exec api python scripts/pipeline/run_scraper.py 10
 
 # 2. Протестировать разные промпты
-docker-compose exec api python process_articles.py 5
+docker-compose exec api python scripts/pipeline/process_articles.py 5
 
 # 3. Проверить результаты
 curl http://localhost:8000/api/v1/articles/?limit=5

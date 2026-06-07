@@ -18,13 +18,13 @@ if [[ ! $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
 fi
 
 # Очистка
-./docker_clean_all.sh
+scripts/ops/docker_clean_all.sh
 
 # Пауза
 sleep 3
 
 # Rebuild
-./docker_rebuild.sh
+scripts/ops/docker_rebuild.sh
 
 echo ""
 echo "════════════════════════════════════════════════════════════════════"

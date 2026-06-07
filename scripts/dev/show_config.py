@@ -21,7 +21,7 @@ def main():
     print("      - high_quality (40+ GB RAM, GPT-OSS 20B)")
     print("      - low_ram (8 GB RAM)")
     print("      - fastest (минимальное время)")
-    print("   3. Перезапустите: ./docker_restart_quick.sh")
+    print("   3. Перезапустите: scripts/ops/docker_restart_quick.sh")
     print()
 
 

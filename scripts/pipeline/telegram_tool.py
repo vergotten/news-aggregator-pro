@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-telegram_tool.py v1.0
+scripts/pipeline/telegram_tool.py v1.0
 
 Утилита для работы с Telegram ботом.
 
 Использование:
     # Проверить подключение
-    python telegram_tool.py status
+    python scripts/pipeline/telegram_tool.py status
 
     # Отправить тестовое сообщение
-    python telegram_tool.py test
+    python scripts/pipeline/telegram_tool.py test
 
     # Отправить форматированный пост
-    python telegram_tool.py post --title "Заголовок" --body "Текст поста"
+    python scripts/pipeline/telegram_tool.py post --title "Заголовок" --body "Текст поста"
 
     # Показать статьи из БД
-    python telegram_tool.py list [--status processed] [--limit 10]
+    python scripts/pipeline/telegram_tool.py list [--status processed] [--limit 10]
 
     # Отправить статью из БД
-    python telegram_tool.py send --id <article_id>
+    python scripts/pipeline/telegram_tool.py send --id <article_id>
 
     # Отправить все processed статьи
-    python telegram_tool.py send-all [--min-score 7] [--limit 5]
+    python scripts/pipeline/telegram_tool.py send-all [--min-score 7] [--limit 5]
 
 Зависимости:
     pip install requests psycopg2-binary
@@ -171,7 +171,7 @@ class TelegramTool:
             f"🧪 <b>Тестовое сообщение</b>\n\n"
             f"Бот работает корректно.\n"
             f"Время: {now}\n\n"
-            f"<i>telegram_tool.py v1.0</i>"
+            f"<i>scripts/pipeline/telegram_tool.py v1.0</i>"
         )
         self.send_message(text)
 
@@ -420,27 +420,27 @@ if __name__ == "__main__":
 # Примеры использования:
 # =================================================================
 #
-# python telegram_tool.py status
+# python scripts/pipeline/telegram_tool.py status
 #   → Проверить бота, канал, БД (токен, chat_id, доступ, кол-во статей)
 #
-# python telegram_tool.py test
+# python scripts/pipeline/telegram_tool.py test
 #   → Отправить тестовое сообщение в канал
 #
-# python telegram_tool.py post --title "AI новости" --body "OpenAI выпустил GPT-5" --link "https://example.com" --tags "ai,openai"
+# python scripts/pipeline/telegram_tool.py post --title "AI новости" --body "OpenAI выпустил GPT-5" --link "https://example.com" --tags "ai,openai"
 #   → Отправить форматированный пост с заголовком, текстом, ссылкой и тегами
 #
-# python telegram_tool.py list
+# python scripts/pipeline/telegram_tool.py list
 #   → Показать processed статьи из БД
 #
-# python telegram_tool.py list --status pending --limit 20
+# python scripts/pipeline/telegram_tool.py list --status pending --limit 20
 #   → Показать 20 pending статей
 #
-# python telegram_tool.py send --id 0929dd03
+# python scripts/pipeline/telegram_tool.py send --id 0929dd03
 #   → Отправить конкретную статью (достаточно первых символов ID)
 #
-# python telegram_tool.py send-all --min-score 5 --limit 3
+# python scripts/pipeline/telegram_tool.py send-all --min-score 5 --limit 3
 #   → Отправить до 3 статей со скором >= 5
 #
 # С Supabase:
-# DATABASE_URL="postgresql://..." python telegram_tool.py list
+# DATABASE_URL="postgresql://..." python scripts/pipeline/telegram_tool.py list
 # =================================================================

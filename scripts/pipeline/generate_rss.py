@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-generate_rss.py v1.0
+scripts/pipeline/generate_rss.py v1.0
 
 Генерация RSS ленты из опубликованных статей.
 
@@ -9,8 +9,8 @@ generate_rss.py v1.0
 и telegraph_url IS NOT NULL, генерирует feed.xml.
 
 Использование:
-    python generate_rss.py
-    python generate_rss.py --output docs/feed.xml --limit 50
+    python scripts/pipeline/generate_rss.py
+    python scripts/pipeline/generate_rss.py --output docs/feed.xml --limit 50
 
 Зависимости:
     pip install psycopg2-binary
@@ -98,7 +98,7 @@ def generate_rss(articles: List[Dict]) -> str:
     SubElement(channel, "link").text = FEED_LINK
     SubElement(channel, "language").text = FEED_LANGUAGE
     SubElement(channel, "lastBuildDate").text = _rfc822_now()
-    SubElement(channel, "generator").text = "news-aggregator-pro/generate_rss.py"
+    SubElement(channel, "generator").text = "news-aggregator-pro/scripts/pipeline/generate_rss.py"
 
     # Items
     for article in articles:
@@ -186,7 +186,7 @@ def main():
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    logger.info(f"generate_rss.py v1.0 | output={args.output} | limit={args.limit}")
+    logger.info(f"scripts/pipeline/generate_rss.py v1.0 | output={args.output} | limit={args.limit}")
 
     articles = get_published_articles(limit=args.limit)
 
