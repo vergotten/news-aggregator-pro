@@ -1,0 +1,79 @@
+# .github/workflows/scrape.yml
+#
+# Автопарсинг Habr + очистка старых статей
+# Запуск: каждые 5 дней (cron) или вручную (workflow_dispatch)
+
+name: Scrape & Cleanup
+
+on:
+  schedule:
+    # Каждые 2 дня в 08:00 UTC (10:00 по Амстердаму)
+    - cron: '0 8 */2 * *'
+
+  # Ручной запуск из GitHub UI (Actions → Scrape & Cleanup → Run workflow)
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Количество статей для парсинга'
+        required: false
+        default: '50'
+      hubs:
+        description: 'Хабы через запятую (пусто = все)'
+        required: false
+        default: ''
+
+jobs:
+  scrape:
+    name: Парсинг и очистка
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements-actions.txt
+
+      - name: Scrape Habr articles
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          LIMIT="${{ github.event.inputs.limit || '50' }}"
+          HUBS="${{ github.event.inputs.hubs || '' }}"
+          
+          echo "🚀 Парсинг: limit=$LIMIT, hubs=$HUBS"
+          
+          if [ -n "$HUBS" ]; then
+            python run_scraper.py --feed "$LIMIT" --hubs "$HUBS" --verbose
+          else
+            python run_scraper.py --feed "$LIMIT" --verbose
+          fi
+
+      - name: Cleanup old articles
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          echo "🧹 Очистка старых статей"
+          python cleanup_articles.py --published-days 30 --unprocessed-days 7 --verbose
+
+      - name: Health check (keep Supabase alive)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python -c "
+          import psycopg2, os
+          c = psycopg2.connect(os.environ['DATABASE_URL'])
+          cur = c.cursor()
+          cur.execute('SELECT COUNT(*) FROM articles')
+          count = cur.fetchone()[0]
+          cur.execute(\"SELECT COUNT(*) FROM articles WHERE relevance_score IS NULL\")
+          pending = cur.fetchone()[0]
+          print(f'📊 Всего статей: {count}, ожидают AI: {pending}')
+          c.close()
+          "

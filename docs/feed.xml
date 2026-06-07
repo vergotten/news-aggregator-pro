@@ -1,0 +1,345 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:atom="http://www.w3.org/2005/Atom" version="2.0">
+  <channel>
+    <title>Tech News Aggregator</title>
+    <description>Curated tech news from Habr and more</description>
+    <link>https://github.com</link>
+    <language>ru</language>
+    <lastBuildDate>Mon, 06 Apr 2026 13:26:32 +0000</lastBuildDate>
+    <generator>news-aggregator-pro/generate_rss.py</generator>
+    <item>
+      <title>Определение характера движения автомобиля по данным пассивного измерения TPMS</title>
+      <link>https://telegra.ph/Opredelenie-haraktera-dvizheniya-avtomobilya-po-dannym-passivnogo-izmereniya-TPMS-04-06</link>
+      <guid isPermaLink="false">e95ca659-cb71-478c-89e9-e0dba028c328</guid>
+      <description>Системы контроля давления в шинах (TPMS) автомобилей передают данные открытым текстом, что позволяет злоумышленникам собирать информацию о присутствии и манере вождения водителей. Исследование показало возможность отслеживания нескольких тысяч автомобилей с помощью недорогого оборудования.</description>
+      <pubDate>Sat, 04 Apr 2026 19:24:12 +0000</pubDate>
+      <category>Big Data</category>
+      <category>Автомобильные гаджеты</category>
+      <category>Беспроводные технологии</category>
+      <category>Информационная безопасность</category>
+      <category>Машинное обучение</category>
+    </item>
+    <item>
+      <title>Китай опередил Neuralink: мировой первый коммерческий нейроимплант</title>
+      <link>https://telegra.ph/Kitaj-operedil-Neuralink-mirovoj-pervyj-kommercheskij-nejroimplant-03-16</link>
+      <guid isPermaLink="false">d2f8f2de-ead8-4a9a-81b6-9a04c91e459a</guid>
+      <description>Китай получил первую лицензию на коммерческое использование нейроинтерфейса NEO, позволяющего парализованным пациентам управлять роботизированной перчаткой. Устройство прошло успешные клинические испытания и готово к массовому внедрению.</description>
+      <pubDate>Sun, 15 Mar 2026 06:01:24 +0000</pubDate>
+      <category>Научно-популярное</category>
+      <category>Искусственный интеллект</category>
+      <category>Биотехнологии</category>
+      <category>Компьютерное железо</category>
+      <category>Машинное обучение</category>
+    </item>
+    <item>
+      <title>Создание USB контроллера на чипе FPGA и интеграция клавиатуры</title>
+      <link>https://telegra.ph/Sozdanie-USB-kontrollera-na-chipe-FPGA-i-integraciya-klaviatury-04-02</link>
+      <guid isPermaLink="false">4adffbbf-df52-4c8e-b0a3-0c64ba11edea</guid>
+      <description>Создан USB контроллер на FPGA чипе. Подключена клавиатура, демонстрируя работу с USB версии 1.1.</description>
+      <pubDate>Fri, 20 Mar 2026 19:18:55 +0000</pubDate>
+      <category>DIY или Сделай сам</category>
+      <category>FPGA</category>
+      <category>Электроника для начинающих</category>
+    </item>
+    <item>
+      <title>Может ли парусная яхта двигаться быстрее скорости ветра?</title>
+      <link>https://telegra.ph/Mozhet-li-parusnaya-yahta-dvigatsya-bystree-skorosti-vetra-04-01</link>
+      <guid isPermaLink="false">8b57369f-a448-4d7c-a654-ec3e3fc6f851</guid>
+      <description>Вопрос о возможности движения парусного судна быстрее ветра вызывал споры на протяжении десятилетий. В конце XIX века Г. Герлах теоретически подтвердил эту возможность, но практическое решение нашлось лишь в XX веке.</description>
+      <pubDate>Fri, 20 Mar 2026 20:59:04 +0000</pubDate>
+      <category>Научно-популярное</category>
+      <category>Физика</category>
+      <category>Транспорт</category>
+    </item>
+    <item>
+      <title>Конкурсные списки: публикация СНИЛС и приказов о зачислении угрожает персональными данными</title>
+      <link>https://telegra.ph/Konkursnye-spiski-publikaciya-SNILS-i-prikazov-o-zachislenii-ugrozhaet-personalnymi-dannymi-03-31</link>
+      <guid isPermaLink="false">22845cb3-56d9-427c-93d5-369e4f158355</guid>
+      <description>Приемная кампания в российских учебных заведениях сопряжена с риском утечки персональных данных. Анализ показал, что 87 из 100 сайтов позволяют деанонимизацию информации через СНИЛС и ФИО.</description>
+      <pubDate>Fri, 20 Mar 2026 21:30:33 +0000</pubDate>
+      <category>IT-стандарты</category>
+      <category>IT-инфраструктура</category>
+      <category>Анализ и проектирование систем</category>
+      <category>Базы данных</category>
+      <category>Восстановление данных</category>
+    </item>
+    <item>
+      <title>Дизайн-токены: гайд по архитектуре и неймингу с примерами и упражнениями</title>
+      <link>https://telegra.ph/Dizajn-tokeny-gajd-po-arhitekture-i-nejmingu-s-primerami-i-uprazhneniyami-03-30</link>
+      <guid isPermaLink="false">97b336b3-f2b1-4f4c-b437-c56917d9c718</guid>
+      <description>Дизайн-токены улучшают взаимодействие между дизайнерами и разработчиками, обеспечивая гибкость и уменьшая технический долг.</description>
+      <pubDate>Sat, 21 Mar 2026 05:00:39 +0000</pubDate>
+      <category>Дизайн</category>
+      <category>CSS</category>
+      <category>HTML</category>
+    </item>
+    <item>
+      <title>Утилиты RTT Viewer и System Viewer: функции и применение</title>
+      <link>https://telegra.ph/Utility-RTT-Viewer-i-System-Viewer-funkcii-i-primenenie-03-29</link>
+      <guid isPermaLink="false">5f8e8d7f-bd43-4acb-be8c-e597640ad427</guid>
+      <description>RTT Viewer от SEGGER J-Link обеспечивает быстрый обмен данными между микроконтроллером и компьютером через кольцевые буферы в RAM. Используется для вывода отладочной информации.</description>
+      <pubDate>Sat, 21 Mar 2026 06:01:00 +0000</pubDate>
+      <category>Производство и разработка электроники</category>
+      <category>Электроника для начинающих</category>
+    </item>
+    <item>
+      <title>Тест для специалиста: каким типом данных хранить номер паспорта?</title>
+      <link>https://telegra.ph/Test-dlya-specialista-kakim-tipom-dannyh-hranit-nomer-pasporta-03-27</link>
+      <guid isPermaLink="false">f2b0f074-0500-4d6d-8b3e-34b572751c43</guid>
+      <description>Простой вопрос о типе данных для хранения номера паспорта в SQL базе разделяет опытных инженеров и менее подготовленных кандидатов.</description>
+      <pubDate>Sat, 21 Mar 2026 08:27:28 +0000</pubDate>
+      <category>Базы данных</category>
+      <category>Проектирование и рефакторинг</category>
+      <category>Карьера в IT-индустрии</category>
+      <category>Качество кода</category>
+      <category>SQL</category>
+    </item>
+    <item>
+      <title>Новые мини-ПК весны 2026: CM5, RK3588, Strix Halo, Panther Lake</title>
+      <link>https://telegra.ph/Novye-mini-PK-vesny-2026-CM5-RK3588-Strix-Halo-Panther-Lake-03-28</link>
+      <guid isPermaLink="false">3fde1d1f-0b63-429d-9fe0-3b03b4e670f2</guid>
+      <description>Весной 2026 года представлены мини-ПК на CM5, RK3588, Strix Halo и Panther Lake. GMK EVO-T2 оснащен процессорами Intel Panther Lake, 10GbE и OCuLink, поддерживает до 128 ГБ памяти и ИИ-ускорители.</description>
+      <pubDate>Sat, 21 Mar 2026 08:01:23 +0000</pubDate>
+      <category>Блог компании Selectel</category>
+      <category>Гаджеты</category>
+      <category>Настольные компьютеры</category>
+      <category>Процессоры</category>
+      <category>Компьютерное железо</category>
+    </item>
+    <item>
+      <title>4 стратегии применения LLM в процессе разработки软件可能会生成俄语回答，但根据要求，我只是提供新的标题，而不包含任何语言的额外解释或说明。因此，按照要求，答案为：</title>
+      <link>https://telegra.ph/4-strategii-primeneniya-LLM-v-processe-razrabotki软件可能会生成俄语回答但根据要求我只是提供新的标题而不包含任何语言的额外解释或说明因此按照要求答案为-03-26</link>
+      <guid isPermaLink="false">d9fc3490-0ed8-40ec-aa05-3aa64cb2141c</guid>
+      <description>Разработчики используют LLM по-разному: от автодополнения до полной генерации кода. Методы валидации варьируются от неформального тестирования до формальных проверок.</description>
+      <pubDate>Sat, 21 Mar 2026 06:09:26 +0000</pubDate>
+      <category>Программирование</category>
+      <category>Искусственный интеллект</category>
+      <category>Управление разработкой</category>
+    </item>
+    <item>
+      <title>Структуры данных: Хэш-таблицы и управление конфликтами кэша</title>
+      <link>https://telegra.ph/Struktury-dannyh-Hehsh-tablicy-i-upravlenie-konfliktami-kehsha-03-25</link>
+      <guid isPermaLink="false">58c0030e-a4fd-49fa-bdb1-29b5a0d91fc6</guid>
+      <description>Миф о константном времени поиска в хэш-таблицах развенчан на практике. Конфликты кэша привели к замедлению.</description>
+      <pubDate>Sat, 21 Mar 2026 07:25:38 +0000</pubDate>
+      <category>Программирование микроконтроллеров</category>
+      <category>Программирование</category>
+      <category>Клиентская оптимизация</category>
+      <category>Процессоры</category>
+    </item>
+    <item>
+      <title>Освоение Data, ML, CV и NLP: актуальные специальности и фундаментальная база</title>
+      <link>https://telegra.ph/Osvoenie-Data-ML-CV-i-NLP-aktualnye-specialnosti-i-fundamentalnaya-baza-03-24</link>
+      <guid isPermaLink="false">e05d88c6-5dce-49eb-bf9d-745a2dcaf525</guid>
+      <description>Освоение актуальных для рынка специальностей Data, ML, CV и NLP требует сочетания теоретической базы и практического опыта. Программа онлайн-магистратуры НИЯУ МИФИ в партнерстве с Яндекс Практикумом предлагает пошаговое погружение в технологии и индивидуальные траектории обучения.</description>
+      <pubDate>Sat, 21 Mar 2026 07:36:18 +0000</pubDate>
+      <category>Блог компании Яндекс Практикум</category>
+      <category>Искусственный интеллект</category>
+      <category>Анализ и проектирование систем</category>
+      <category>Машинное обучение</category>
+      <category>Учебный процесс в IT</category>
+    </item>
+    <item>
+      <title>Переход от трансформеров: использование LLM для создания ИИ-агентов</title>
+      <link>https://telegra.ph/Perehod-ot-transformerov-ispolzovanie-LLM-dlya-sozdaniya-II-agentov-03-23</link>
+      <guid isPermaLink="false">1e0ff730-8956-44ce-9122-e900e33d7512</guid>
+      <description>Индустрия ИИ столкнулась с пределами трансформерной архитектуры. Модели достигли локального максимума, требующего новых подходов.</description>
+      <pubDate>Sat, 21 Mar 2026 07:36:44 +0000</pubDate>
+      <category>Big Data</category>
+      <category>Data Engineering</category>
+      <category>DIY или Сделай сам</category>
+      <category>Habr</category>
+      <category>Natural Language Processing</category>
+    </item>
+    <item>
+      <title>Запуск Open-Sora с 15 ГБ VRAM: Трюки с reverse-engineering и monkey-patching</title>
+      <link>https://telegra.ph/Zapusk-Open-Sora-s-15-GB-VRAM-Tryuki-s-reverse-engineering-i-monkey-patching-03-22</link>
+      <guid isPermaLink="false">a4eb70c8-9f49-437c-9955-128f23810994</guid>
+      <description>Энтузиасты преодолели ограничения Google Colab, запустив модель Open-Sora-Plan на видеокарте NVIDIA T4 с 15 ГБ VRAM. Процесс включал реверс-инжиниринг и monkey-patching для борьбы с аппаратными ограничениями.</description>
+      <pubDate>Fri, 20 Mar 2026 21:40:45 +0000</pubDate>
+      <category>Ненормальное программирование</category>
+    </item>
+    <item>
+      <title>Замена тестировщика на AI-агента:</title>
+      <link>https://telegra.ph/Zamena-testirovshchika-na-AI-agenta案例给出的指令和原文似乎不完全匹配提供的俄文原文与中文翻译或解释不对应根据给定的俄文原文和规则正确的翻译应为-03-22</link>
+      <guid isPermaLink="false">86758292-54a9-47e5-ad49-68b4e0bc0050</guid>
+      <description>RankCaster AI заменил QA тестировщика на автономного AI-агента за 24 часа, сократив время регрессионного анализа с 48 до нескольких часов.</description>
+      <pubDate>Fri, 20 Mar 2026 21:56:21 +0000</pubDate>
+      <category>Развитие стартапа</category>
+      <category>Управление разработкой</category>
+      <category>Тестирование веб-сервисов</category>
+    </item>
+    <item>
+      <title>Инструмент CLI для защиты структуры задач</title>
+      <link>https://telegra.ph/Instrument-CLI-dlya-zashchity-struktury-zadach-03-21</link>
+      <guid isPermaLink="false">97151294-9587-468c-a9d8-46aed154b481</guid>
+      <description>проблемы с использованием локальных ИИ-агентов для управления проектами и создание CLI-инструмента для защиты структуры задач.</description>
+      <pubDate>Fri, 20 Mar 2026 19:13:56 +0000</pubDate>
+      <category>Open source</category>
+    </item>
+    <item>
+      <title>Написание 46K строк на Claude Code: практические рекомендации</title>
+      <link>https://telegra.ph/Napisanie-46K-strok-na-Claude-Code-prakticheskie-rekomendacii-03-20</link>
+      <guid isPermaLink="false">abaaf9e4-9116-430f-8f47-699ea98a0a64</guid>
+      <description>Создание коммерческого проекта с нуля с помощью вайбкодинга: 46 000 строк кода, два месяца, два разработчика. Использование AI для управления задачами и декомпозиции в Jira.</description>
+      <pubDate>Thu, 19 Mar 2026 07:59:38 +0000</pubDate>
+      <category>Искусственный интеллект</category>
+      <category>NestJS</category>
+      <category>TypeScript</category>
+      <category>Веб-разработка</category>
+      <category>CRM-системы</category>
+    </item>
+    <item>
+      <title>Kling Motion Control 3.0 Pro: Новая нейросеть для переноса движений в России</title>
+      <link>https://telegra.ph/Kling-Motion-Control-30-Pro-Novaya-nejroset-dlya-perenosa-dvizhenij-v-Rossii-03-20</link>
+      <guid isPermaLink="false">13cee51d-1911-42b1-9e5e-d1d365c29580</guid>
+      <description>Kling Video 3.0 Motion Control Pro представляет улучшенный перенос движений с видео на фото. Инструмент сохраняет лицо персонажа при поворотах и обеспечивает 4K качество.</description>
+      <pubDate>Thu, 19 Mar 2026 07:54:10 +0000</pubDate>
+      <category>Блог компании StudyAI</category>
+    </item>
+    <item>
+      <title>Запуск корпоративной BI+ETL-системы за 1,5 млн рублей: PolyAnalyst ETL+BI</title>
+      <link>https://telegra.ph/Zapusk-korporativnoj-BIETL-sistemy-za-15-mln-rublej-PolyAnalyst-ETLBI-03-20</link>
+      <guid isPermaLink="false">57c40267-3a4c-4ed2-a1c8-74e4a626d116</guid>
+      <description>Исследуется возможность внедрения отечественной BI+ETL-системы за 1,5 млн рублей. Рассмотрены PolyAnalyst ETL+BI, архитектура и компоненты.</description>
+      <pubDate>Thu, 19 Mar 2026 07:58:58 +0000</pubDate>
+      <category>Блог компании ИТ-интегратор Белый код</category>
+      <category>Визуализация данных</category>
+      <category>Хранение данных</category>
+      <category>Анализ и проектирование систем</category>
+    </item>
+    <item>
+      <title>Аналитики данных: использование ИИ в профессиональной деятельности</title>
+      <link>https://telegra.ph/Analitiki-dannyh-ispolzovanie-II-v-professionalnoj-deyatelnosti-03-20</link>
+      <guid isPermaLink="false">01b0260d-7599-4cab-ae94-d1a5b0b8d11f</guid>
+      <description>ИИ меняет подход аналитиков данных к работе, но не заменяет профессиональные навыки. Использование нейросетей требует дополнительных знаний и умений для эффективного применения.</description>
+      <pubDate>Tue, 17 Mar 2026 07:37:24 +0000</pubDate>
+      <category>Блог компании Яндекс Практикум</category>
+      <category>Анализ и проектирование систем</category>
+      <category>Карьера в IT-индустрии</category>
+      <category>Учебный процесс в IT</category>
+      <category>Искусственный интеллект</category>
+    </item>
+    <item>
+      <title>Математик 20 лет создавал неразрешимую задачу, но GPT-5.4 нарушил его концепцию мира</title>
+      <link>https://telegra.ph/Matematik-20-let-sozdaval-nerazreshimuyu-zadachu-no-GPT-54-narushil-ego-koncepciyu-mira-03-19</link>
+      <guid isPermaLink="false">943fcaf1-d5d9-4031-b5cf-bfadcde83cc9</guid>
+      <description>Польский математик создал задачу, которую считал нерешаемой для ИИ. Однако GPT-5.4 справился с ней, что вызвало сильную реакцию у исследователя.</description>
+      <pubDate>Thu, 19 Mar 2026 07:25:08 +0000</pubDate>
+      <category>Блог компании BotHub</category>
+      <category>Искусственный интеллект</category>
+      <category>Машинное обучение</category>
+      <category>Научно-популярное</category>
+      <category>Будущее здесь</category>
+    </item>
+    <item>
+      <title>Эволюция логирования в Lenta tech: переход от Loki к Victoria Logs</title>
+      <link>https://telegra.ph/EHvolyuciya-logirovaniya-v-Lenta-tech-perehod-ot-Loki-k-Victoria-Logs-03-19</link>
+      <guid isPermaLink="false">99e17494-10bf-4eaa-872b-439ab53b2b44</guid>
+      <description>Lenta tech описывает эволюцию системы логирования от Loki к Victoria Logs. Обсуждаются бюджетные ограничения и технические решения для обработки терабайт логов ежедневно.</description>
+      <pubDate>Thu, 19 Mar 2026 07:52:35 +0000</pubDate>
+      <category>Блог компании Lenta tech</category>
+      <category>*nix</category>
+      <category>Amazon Web Services</category>
+      <category>DevOps</category>
+      <category>Python</category>
+    </item>
+    <item>
+      <title>Обзор платформы «Атом.Мост»: функции и возможности</title>
+      <link>https://telegra.ph/Obzor-platformy-AtomMost-funkcii-i-vozmozhnosti-03-19</link>
+      <guid isPermaLink="false">cbdb0520-5c3a-4ed4-b6e1-f5ed93f2685d</guid>
+      <description>Технический директор компании «Белый код» Сергей Скирдин представляет обзор продукта «Атом.Мост» от «Гринатом». Обсуждаются особенности шины данных и ее применение в корпоративной архитектуре.</description>
+      <pubDate>Tue, 17 Mar 2026 07:42:53 +0000</pubDate>
+      <category>Блог компании ИТ-интегратор Белый код</category>
+      <category>IT-компании</category>
+      <category>Open source</category>
+      <category>IT-инфраструктура</category>
+    </item>
+    <item>
+      <title>Автоматизация сканирования инфраструктуры: версия 3.0 скрипта для Сканер-ВС 7</title>
+      <link>https://telegra.ph/Avtomatizaciya-skanirovaniya-infrastruktury-versiya-30-skripta-dlya-Skaner-VS-7-03-19</link>
+      <guid isPermaLink="false">ad37ce55-777e-45e5-bd58-8526fc912b74</guid>
+      <description>Обновлен скрипт для Сканер-ВС 7, автоматизирующий сканирование инфраструктуры и формирование отчетов. Упрощен пайплайн и интегрированы новые возможности API.</description>
+      <pubDate>Tue, 17 Mar 2026 08:00:07 +0000</pubDate>
+      <category>Блог компании Selectel</category>
+      <category>Информационная безопасность</category>
+      <category>Python</category>
+      <category>IT-инфраструктура</category>
+      <category>Программирование</category>
+    </item>
+    <item>
+      <title>Тестировщик вступил в коммьюнити-стартап с нейронными сетями и создал ИИ-генератор заглушек</title>
+      <link>https://telegra.ph/Testirovshchik-vstupil-v-kommyuniti-startap-s-nejronnymi-setyami-i-sozdal-II-generator-zaglushek-03-19</link>
+      <guid isPermaLink="false">1b9fe557-6815-461c-907f-ae25feed4359</guid>
+      <description>Тестировщик Стас, осознав важность нейронных сетей, начал изучать ИИ и создал Телеграм-бота для определения уровня английского. Вдохновленный успехом, он вступил в комьюнити AlfaGen и предложил проект по созданию агента для генерации заглушек.</description>
+      <pubDate>Tue, 17 Mar 2026 08:03:09 +0000</pubDate>
+      <category>Блог компании Альфа-Банк</category>
+      <category>Тестирование IT-систем</category>
+      <category>Искусственный интеллект</category>
+      <category>Карьера в IT-индустрии</category>
+      <category>IT-инфраструктура</category>
+    </item>
+    <item>
+      <title>Капсульный фреймворк: упаковка архитектуры в ДНК проектов</title>
+      <link>https://telegra.ph/Kapsulnyj-frejmvork-upakovka-arhitektury-v-DNK-proektov-03-19</link>
+      <guid isPermaLink="false">a2ae9fa0-9198-4191-90e0-4a9b02651634</guid>
+      <description>Разработчики создали капсульный фреймворк для микросервисов, который стал основой для всех проектов. Описаны шаги по упаковке архитектуры в ДНК проектов.</description>
+      <pubDate>Tue, 17 Mar 2026 07:38:59 +0000</pubDate>
+      <category>Node.JS</category>
+      <category>Анализ и проектирование систем</category>
+      <category>TypeScript</category>
+    </item>
+    <item>
+      <title>Социальная инженерия в цифровизации: опыт автоматизатора</title>
+      <link>https://telegra.ph/Socialnaya-inzheneriya-v-cifrovizacii-opyt-avtomatizatora-03-18-4</link>
+      <guid isPermaLink="false">00401d61-0c9c-47b9-ab72-2513db806aa7</guid>
+      <description>Автоматизация производства сопровождается не только техническими, но и социальными вызовами. Внедрение ИИ требует убеждения сотрудников и руководства в его преимуществах.</description>
+      <pubDate>Sun, 15 Mar 2026 04:48:38 +0000</pubDate>
+      <category>Промышленное программирование</category>
+    </item>
+    <item>
+      <title>Планировщик задач: стать своим собственным шедулером</title>
+      <link>https://telegra.ph/Planirovshchik-zadach-stat-svoim-sobstvennym-shedulerom-03-18</link>
+      <guid isPermaLink="false">49ae515a-dcc8-44e8-b260-09f7cf46be30</guid>
+      <description>Рассмотрен подход к организации программных таймеров и планировщика задач. Обсуждены примеры расписания выполнения задач с различной частотой.</description>
+      <pubDate>Sun, 15 Mar 2026 06:59:34 +0000</pubDate>
+      <category>C</category>
+      <category>Программирование микроконтроллеров</category>
+    </item>
+    <item>
+      <title>22 протокола мониторинга в PingZen: от пинга до сценариев Playwright</title>
+      <link>https://telegra.ph/22-protokola-monitoringa-v-PingZen-ot-pinga-do-scenariev-Playwright-03-17</link>
+      <guid isPermaLink="false">4cde7a98-7026-4df2-ae5e-502fe510d18c</guid>
+      <description>PingZen поддерживает 22 протокола мониторинга, включая HTTP, TCP, UDP и ICMP. Особое внимание уделено эмуляции пользовательских действий с помощью Playwright.</description>
+      <pubDate>Sun, 15 Mar 2026 07:00:46 +0000</pubDate>
+      <category>DevOps</category>
+      <category>Системное администрирование</category>
+      <category>Python</category>
+      <category>Kubernetes</category>
+    </item>
+    <item>
+      <title>Процессирование событий в UE5: сериализуемые вызовы функций для оптимизации производительности</title>
+      <link>https://telegra.ph/Processirovanie-sobytij-v-UE5-serializuemye-vyzovy-funkcij-dlya-optimizacii-proizvoditelnosti-03-17</link>
+      <guid isPermaLink="false">d6110f99-fc8d-4410-8bd8-f8dddb364c7b</guid>
+      <description>Разработчик UE5 создает плагин FunctionHandler для сериализуемых вызовов функций в рантайме. Плагин позволяет конфигурировать вызовы без хардкода и десятков оберток.</description>
+      <pubDate>Sun, 15 Mar 2026 07:00:46 +0000</pubDate>
+      <category>C++</category>
+      <category>Программирование</category>
+      <category>Разработка игр</category>
+      <category>Open source</category>
+      <category>Unreal Engine</category>
+    </item>
+    <item>
+      <title>Запуск LLM на AMD RX580: проблемы ROCm, Ollama и GPU инференс</title>
+      <link>https://telegra.ph/Zapusk-LLM-na-AMD-RX580-problemy-ROCm-Ollama-i-GPU-inferens-03-16</link>
+      <guid isPermaLink="false">4ea1dab6-d50f-49e6-a17c-6e553c4d0d17</guid>
+      <description>Успешно запущено LLM inference на старой AMD RX580 с помощью ROCm. Решение включило обновление ядра до версии 6.8 и использование llama.cpp с ROCm.</description>
+      <pubDate>Sun, 15 Mar 2026 06:15:38 +0000</pubDate>
+      <category>GPGPU</category>
+      <category>Старое железо</category>
+      <category>Программирование</category>
+      <category>Отладка</category>
+      <category>Искусственный интеллект</category>
+    </item>
+  </channel>
+</rss>

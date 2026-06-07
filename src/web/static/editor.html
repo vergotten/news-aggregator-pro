@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>News Editor - Редактор Статей</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .header h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .filters {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .filters select, .filters button {
+            padding: 8px 16px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background: white;
+            cursor: pointer;
+        }
+        
+        .filters button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+        }
+        
+        .filters button:hover {
+            background: #45a049;
+        }
+        
+        .layout {
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 20px;
+        }
+        
+        .articles-list {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        
+        .article-item {
+            padding: 15px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .article-item:hover {
+            background: #f9f9f9;
+        }
+        
+        .article-item.selected {
+            background: #e3f2fd;
+        }
+        
+        .article-item h3 {
+            font-size: 14px;
+            color: #333;
+            margin-bottom: 5px;
+        }
+        
+        .article-meta {
+            display: flex;
+            gap: 10px;
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .status-badge {
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+        
+        .status-pending { background: #fff3cd; color: #856404; }
+        .status-published { background: #d4edda; color: #155724; }
+        .status-rejected { background: #f8d7da; color: #721c24; }
+        .status-processed { background: #cce5ff; color: #004085; }
+        
+        .editor-panel {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .editor-panel h2 {
+            margin-bottom: 20px;
+            color: #333;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #555;
+        }
+        
+        .form-group input, .form-group textarea, .form-group select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: inherit;
+        }
+        
+        .form-group textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+        
+        .form-actions {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        
+        .btn-primary { background: #4CAF50; color: white; }
+        .btn-secondary { background: #6c757d; color: white; }
+        .btn-danger { background: #dc3545; color: white; }
+        .btn-warning { background: #ffc107; color: #000; }
+        
+        .btn:hover {
+            opacity: 0.9;
+        }
+        
+        .score {
+            font-size: 18px;
+            font-weight: bold;
+            color: #4CAF50;
+        }
+        
+        .images-preview {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .images-preview img {
+            width: 100%;
+            height: 100px;
+            object-fit: cover;
+            border-radius: 4px;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📝 News Editor</h1>
+            <div class="filters">
+                <select id="filterStatus">
+                    <option value="">Все статусы</option>
+                    <option value="pending">Pending</option>
+                    <option value="processed">Processed</option>
+                    <option value="published">Published</option>
+                    <option value="rejected">Rejected</option>
+                </select>
+                
+                <select id="filterRelevance">
+                    <option value="0">Все оценки</option>
+                    <option value="8">8+ (Топ)</option>
+                    <option value="7">7+ (Хорошие)</option>
+                    <option value="5">5+ (Средние)</option>
+                </select>
+                
+                <button onclick="loadArticles()">🔄 Обновить</button>
+            </div>
+        </div>
+        
+        <div class="layout">
+            <div class="articles-list" id="articlesList">
+                <div class="loading">Загрузка...</div>
+            </div>
+            
+            <div class="editor-panel" id="editorPanel">
+                <h2>Выберите статью</h2>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let articles = [];
+        let selectedArticle = null;
+        
+        async function loadArticles() {
+            const status = document.getElementById('filterStatus').value;
+            const relevance = document.getElementById('filterRelevance').value;
+            
+            let url = '/api/v1/articles/?limit=50';
+            if (status) url += `&status=${status}`;
+            if (relevance) url += `&min_relevance=${relevance}`;
+            
+            try {
+                const response = await fetch(url);
+                articles = await response.json();
+                renderArticlesList();
+            } catch (error) {
+                console.error('Error:', error);
+                document.getElementById('articlesList').innerHTML = 
+                    '<div class="loading">Ошибка загрузки</div>';
+            }
+        }
+        
+        function renderArticlesList() {
+            const container = document.getElementById('articlesList');
+            
+            if (articles.length === 0) {
+                container.innerHTML = '<div class="loading">Нет статей</div>';
+                return;
+            }
+            
+            container.innerHTML = articles.map(article => `
+                <div class="article-item ${selectedArticle?.id === article.id ? 'selected' : ''}"
+                     onclick="selectArticle('${article.id}')">
+                    <h3>${article.editorial_title || article.title}</h3>
+                    <div class="article-meta">
+                        <span class="status-badge status-${article.publication_status || 'pending'}">
+                            ${article.publication_status || 'pending'}
+                        </span>
+                        ${article.relevance_score ? `<span>⭐ ${article.relevance_score}/10</span>` : ''}
+                        ${article.is_news ? '<span>📰 News</span>' : '<span>📄 Article</span>'}
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        function selectArticle(id) {
+            selectedArticle = articles.find(a => a.id === id);
+            renderEditor();
+            renderArticlesList();
+        }
+        
+        function renderEditor() {
+            if (!selectedArticle) return;
+            
+            const panel = document.getElementById('editorPanel');
+            const images = selectedArticle.images || [];
+            
+            panel.innerHTML = `
+                <h2>Редактирование</h2>
+                
+                <div class="form-group">
+                    <label>Оригинальный заголовок</label>
+                    <input type="text" value="${selectedArticle.title}" disabled>
+                </div>
+                
+                <div class="form-group">
+                    <label>AI Заголовок (для публикации)</label>
+                    <input type="text" id="editorialTitle" 
+                           value="${selectedArticle.editorial_title || ''}">
+                </div>
+                
+                <div class="form-group">
+                    <label>Краткое описание (тизер)</label>
+                    <textarea id="editorialTeaser" rows="3">${selectedArticle.editorial_teaser || ''}</textarea>
+                </div>
+                
+                <div class="form-group">
+                    <label>Нормализованный текст (для ТГ)</label>
+                    <textarea id="editorialRewritten" rows="10">${selectedArticle.editorial_rewritten || ''}</textarea>
+                </div>
+                
+                <div class="form-group">
+                    <label>Статус публикации</label>
+                    <select id="publicationStatus">
+                        <option value="pending" ${selectedArticle.publication_status === 'pending' ? 'selected' : ''}>
+                            Pending (ожидает)
+                        </option>
+                        <option value="approved" ${selectedArticle.publication_status === 'approved' ? 'selected' : ''}>
+                            Approved (одобрено)
+                        </option>
+                        <option value="published" ${selectedArticle.publication_status === 'published' ? 'selected' : ''}>
+                            Published (опубликовано)
+                        </option>
+                        <option value="rejected" ${selectedArticle.publication_status === 'rejected' ? 'selected' : ''}>
+                            Rejected (отклонено)
+                        </option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>Релевантность</label>
+                    <div class="score">${selectedArticle.relevance_score || 'N/A'}/10</div>
+                    ${selectedArticle.relevance_reason ? `<p style="font-size: 12px; color: #666;">${selectedArticle.relevance_reason}</p>` : ''}
+                </div>
+                
+                ${images.length > 0 ? `
+                    <div class="form-group">
+                        <label>Изображения (${images.length})</label>
+                        <div class="images-preview">
+                            ${images.map(img => `<img src="${img.url}" alt="${img.alt || ''}">`).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+                
+                <div class="form-actions">
+                    <button class="btn btn-primary" onclick="saveArticle()">💾 Сохранить</button>
+                    <button class="btn btn-warning" onclick="publishToTelegram()">📱 Опубликовать в ТГ</button>
+                    <button class="btn btn-secondary" onclick="window.open('${selectedArticle.url}', '_blank')">
+                        🔗 Оригинал
+                    </button>
+                </div>
+            `;
+        }
+        
+        async function saveArticle() {
+            const data = {
+                editorial_title: document.getElementById('editorialTitle').value,
+                editorial_teaser: document.getElementById('editorialTeaser').value,
+                editorial_rewritten: document.getElementById('editorialRewritten').value,
+                publication_status: document.getElementById('publicationStatus').value
+            };
+            
+            try {
+                const response = await fetch(`/api/v1/articles/${selectedArticle.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                
+                if (response.ok) {
+                    alert('✅ Сохранено!');
+                    loadArticles();
+                } else {
+                    alert('❌ Ошибка сохранения');
+                }
+            } catch (error) {
+                alert('❌ Ошибка: ' + error.message);
+            }
+        }
+        
+        async function publishToTelegram() {
+            if (!confirm('Опубликовать в Telegram?')) return;
+            
+            try {
+                const response = await fetch(`/api/v1/telegram/publish/${selectedArticle.id}`, {
+                    method: 'POST'
+                });
+                
+                if (response.ok) {
+                    alert('✅ Опубликовано в Telegram!');
+                    selectedArticle.publication_status = 'published';
+                    saveArticle();
+                } else {
+                    alert('❌ Ошибка публикации');
+                }
+            } catch (error) {
+                alert('❌ Ошибка: ' + error.message);
+            }
+        }
+        
+        // Загрузить при старте
+        loadArticles();
+        
+        // Обработчики фильтров
+        document.getElementById('filterStatus').addEventListener('change', loadArticles);
+        document.getElementById('filterRelevance').addEventListener('change', loadArticles);
+    </script>
+</body>
+</html>
