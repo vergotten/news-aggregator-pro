@@ -1429,9 +1429,47 @@ class OllamaProvider(LLMProvider):
             # Fallback на env только если config.model пуст.
             self.model = self.config.model or os.getenv("OLLAMA_MODEL", "glm-4.7-flash:q4_K_M")
             logger.info(f"Ollama провайдер инициализирован с моделью: {self.model}")
+            self._log_runtime_backend()
         except Exception as e:
             logger.error(f"Ошибка инициализации Ollama провайдера: {e}")
             raise
+
+    def _log_runtime_backend(self) -> None:
+        """Спросить у Ollama /api/ps, грузится ли модель в GPU (VRAM) или в CPU (RAM).
+
+        size_vram > 0           → модель (полностью или частично) на GPU
+        size_vram == 0          → модель целиком в CPU/RAM
+        size_vram == size       → 100% на GPU
+        """
+        try:
+            resp = requests.get(f"{self.api_base}/api/ps", timeout=10)
+            if resp.status_code != 200:
+                logger.debug(f"[Ollama] /api/ps вернул {resp.status_code}, пропускаем проверку backend")
+                return
+            models = resp.json().get("models", [])
+            if not models:
+                logger.info(
+                    "[Ollama] Backend: модель ещё не загружена в память "
+                    "(узнаем при первом запросе — смотри лог после первого generate)"
+                )
+                return
+            for m in models:
+                name = m.get("name") or m.get("model")
+                size = m.get("size", 0)
+                size_vram = m.get("size_vram", 0)
+                if size_vram <= 0:
+                    backend = "CPU (0% в VRAM — медленно!)"
+                elif size_vram >= size:
+                    backend = "GPU (100% в VRAM — быстро)"
+                else:
+                    pct = round(size_vram / size * 100) if size else 0
+                    backend = f"ГИБРИД (~{pct}% в VRAM, остальное CPU)"
+                logger.info(
+                    f"[Ollama] Backend для '{name}': {backend} "
+                    f"(size={size / 1e9:.2f}GB, size_vram={size_vram / 1e9:.2f}GB)"
+                )
+        except Exception as e:
+            logger.debug(f"[Ollama] Не удалось проверить GPU/CPU backend: {e}")
 
     def generate(
             self,
@@ -1467,6 +1505,12 @@ class OllamaProvider(LLMProvider):
                 logger.error(error_msg)
                 self._error_count += 1
                 raise Exception(error_msg)
+
+            # Модель гарантированно загружена в память только после первого
+            # успешного запроса — теперь /api/ps покажет реальный backend.
+            if not getattr(self, "_backend_logged_after_load", False):
+                self._backend_logged_after_load = True
+                self._log_runtime_backend()
 
             return response.json()["response"]
 

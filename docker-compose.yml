@@ -97,6 +97,7 @@ services:
       OLLAMA_NUM_GPU: -1
       OLLAMA_GPU_MEMORY: 10GB
       OLLAMA_GPU_LAYERS: auto
+      OLLAMA_DEBUG: "1"          # подробные логи: видно GPU/CPU runtime, layers offload
     ports:
       - "${OLLAMA_PORT:-11434}:11434"
     volumes:
