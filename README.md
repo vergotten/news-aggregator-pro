@@ -656,7 +656,7 @@ TELEGRAM_CHANNEL_URL: ${TELEGRAM_CHANNEL_URL}
 ## Структура проекта
 
 ```
-news-aggregator-pro/
+news_aggregator_pro_refactored/
 ├── .github/
 │   └── workflows/
 │       ├── scrape.yml                 # Автопарсинг каждые 2 дня
@@ -685,7 +685,6 @@ news-aggregator-pro/
 │   ├── infrastructure/
 │   │   ├── ai/
 │   │   │   ├── llm_provider.py
-│   │   │   ├── ollama_client.py
 │   │   │   └── qdrant_client.py
 │   │   ├── telegram/
 │   │   │   ├── telegraph_publisher.py # v3.0 (JSON Node API)
