@@ -1378,7 +1378,7 @@ class GoogleProvider(LLMProvider):
             prompt: str,
             task_type,
             system_prompt: Optional[str] = None,
-            temperature: Optional[sfloat] = None,
+            temperature: Optional[float] = None,
             max_tokens: Optional[int] = None,
     ) -> str:
         """
