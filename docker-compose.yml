@@ -156,7 +156,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-newsaggregator}:${POSTGRES_PASSWORD:-changeme123}@postgres:5432/${POSTGRES_DB:-news_aggregator}
       REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
-      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      OLLAMA_BASE_URL: http://ollama:11434
       PYTHONUNBUFFERED: 1
       PYTHONPATH: /app
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
