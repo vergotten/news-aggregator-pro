@@ -785,7 +785,7 @@ class ModelsConfig:
                     complexity=TaskComplexity.SIMPLE,
                     required_capabilities=["chat"],
                     preferred_capabilities=[],
-                    min_max_tokens=1000,
+                    min_max_tokens=4096,
                     optimal_temperature=0.1,
                 ),
             }
@@ -1352,7 +1352,7 @@ class ModelsConfig:
                 complexity=TaskComplexity.SIMPLE,
                 required_capabilities=["chat"],
                 preferred_capabilities=[],
-                min_max_tokens=1000,
+                min_max_tokens=4096,
                 optimal_temperature=0.1,
             ),
             AgentType.RELEVANCE: AgentRequirements(
@@ -1360,7 +1360,7 @@ class ModelsConfig:
                 complexity=TaskComplexity.SIMPLE,
                 required_capabilities=["chat"],
                 preferred_capabilities=[],
-                min_max_tokens=1000,
+                min_max_tokens=4096,
                 optimal_temperature=0.3,
             ),
             AgentType.SUMMARIZER: AgentRequirements(
@@ -1392,7 +1392,7 @@ class ModelsConfig:
                 complexity=TaskComplexity.SIMPLE,
                 required_capabilities=["chat"],
                 preferred_capabilities=[],
-                min_max_tokens=1000,
+                min_max_tokens=4096,
                 optimal_temperature=0.1,
             ),
             AgentType.TELEGRAM_FORMATTER: AgentRequirements(

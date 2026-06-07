@@ -1143,9 +1143,9 @@ class GoogleProvider(LLMProvider):
 
     # TaskType.value → модель (fallback если ModelsConfig не задал нужную)
     TASK_MODEL_MAP = {
-        "heavy": "gemini-2.5-pro-preview-06-05",  # rewriter, style_normalizer
-        "medium": "gemini-2.0-flash",  # summarizer, formatters
-        "light": "gemini-2.0-flash-lite",  # classifier, relevance, validator
+        "heavy": "gemini-2.5-flash",  # rewriter, style_normalizer
+        "medium": "gemini-2.5-flash",  # summarizer, formatters
+        "light": "gemini-2.5-flash",  # classifier, relevance, validator
     }
 
     def __init__(self, config: Union[dict, "LLMConfig"]):
