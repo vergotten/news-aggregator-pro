@@ -30,7 +30,7 @@ google:
 
 ollama:
   model: qwen2.5:14b-instruct-q5_k_m
-  base_url: http://ollama:11434
+  base_url: http://host.docker.internal:11434   # ← хостовый Ollama вместо контейнерного
   context_length: 32768
 
 # Per-agent модели Ollama (раскомментируй при локальной работе)
