@@ -220,6 +220,30 @@ Primary Provider → Fallback #1 → Fallback #2 → Fallback #3
      Groq       →   OpenRouter  →    Google   →    Ollama
 ```
 
+### OpenRouter
+
+```bash
+LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=sk-or-v1-...                            # https://openrouter.ai/keys
+OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct:free    # опц.: закрепить модель
+OPENROUTER_EXCLUDED_MODELS=nemotron,gpt-oss-120b           # опц.: исключить модели
+```
+
+Бесплатные модели обнаруживаются автоматически, сортируются по размеру под
+тип задачи и переключаются при rate-limit. Подробнее: [docs/AGENT_BACKENDS.md](docs/AGENT_BACKENDS.md).
+
+### Agent Backend: Legacy / LangChain
+
+```bash
+pip install -r requirements-ai.txt   # для langchain backend
+AGENT_BACKEND=langchain              # или legacy (по умолчанию)
+```
+
+Четыре основных агента (classifier, relevance, summarizer, rewriter) имеют
+LangChain-версии с нативным structured output. Публичный API идентичен,
+переключение безопасно — без LangChain фабрика откатывается на legacy.
+Подробнее: [docs/AGENT_BACKENDS.md](docs/AGENT_BACKENDS.md).
+
 ---
 
 ## Per-Agent модели (Ollama)

@@ -83,7 +83,6 @@ services:
     container_name: news-aggregator-ollama
     restart: unless-stopped
     <<: *image-policy
-
     deploy:
       resources:
         reservations:
@@ -91,13 +90,10 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [ gpu ]
-
     environment:
       OLLAMA_HOST: "0.0.0.0:11434"
       OLLAMA_NUM_GPU: -1
-      OLLAMA_GPU_MEMORY: 10GB
-      OLLAMA_GPU_LAYERS: auto
-      OLLAMA_DEBUG: "1"          # подробные логи: видно GPU/CPU runtime, layers offload
+      OLLAMA_DEBUG: "0"
     ports:
       - "${OLLAMA_PORT:-11434}:11434"
     volumes:
@@ -112,36 +108,102 @@ services:
       start_period: 60s
 
   # ============================================================================
-  # Directus CMS (Database Admin Interface)
+  # vLLM — OpenAI-совместимый сервер, быстрее Ollama на батчах
+  # Запуск: docker compose --profile vllm up -d vllm
+  #
+  # Использует уже скачанные GGUF-блобы из ./ollama_models — без повторной
+  # загрузки весов. Токенизатор (~10 МБ) кэшируется в ./vllm_cache однократно.
+  #
+  # Переменные в .env:
+  #   VLLM_GGUF_BLOB   — sha256-имя файла из ollama_models/models/blobs/
+  #   VLLM_TOKENIZER   — HuggingFace repo токенизатора
+  #   VLLM_MODEL_NAME  — имя модели в API (то что передаётся в запросах)
+  #   VLLM_GPU_MEM     — доля VRAM (0.0–1.0), default 0.9
+  #   VLLM_MAX_LEN     — max context length
   # ============================================================================
-  directus:
-    image: directus/directus:latest
-    container_name: news-aggregator-directus
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: news-aggregator-vllm
     restart: unless-stopped
+    profiles: [vllm]
     <<: *image-policy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
     environment:
-      DB_CLIENT: postgres
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_DATABASE: ${POSTGRES_DB:-news_aggregator}
-      DB_USER: ${POSTGRES_USER:-newsaggregator}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-changeme123}
-      KEY: ${DIRECTUS_KEY:-replace-with-random-value-in-production}
-      SECRET: ${DIRECTUS_SECRET:-replace-with-another-random-value}
-      ADMIN_EMAIL: ${DIRECTUS_ADMIN_EMAIL:-admin@example.com}
-      ADMIN_PASSWORD: ${DIRECTUS_ADMIN_PASSWORD:-admin}
-      PUBLIC_URL: http://localhost:8055
-      WEBSOCKETS_ENABLED: true
+      HUGGING_FACE_HUB_TOKEN: ${HUGGINGFACEHUB_API_TOKEN}
+    command: >
+      --model /gguf/${VLLM_GGUF_BLOB}
+      --tokenizer ${VLLM_TOKENIZER:-Qwen/Qwen2.5-14B-Instruct}
+      --served-model-name ${VLLM_MODEL_NAME:-qwen2.5-14b}
+      --port 8001
+      --gpu-memory-utilization ${VLLM_GPU_MEM:-0.9}
+      --max-model-len ${VLLM_MAX_LEN:-16384}
+      --dtype float16
     ports:
-      - "${DIRECTUS_PORT:-8055}:8055"
+      - "${VLLM_PORT:-8001}:8001"
     volumes:
-      - directus_uploads:/directus/uploads
-      - directus_extensions:/directus/extensions
+      - ./ollama_models/models/blobs:/gguf:ro
+      - ./vllm_cache:/root/.cache/huggingface
+    networks:
+      - news-aggregator-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8001/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  # Pulls model on demand only — run with: docker compose --profile init up ollama-init
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: news-aggregator-ollama-init
+    restart: "no"
+    profiles: [init]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c", "ollama pull ${OLLAMA_MODEL:-qwen2.5:14b-instruct-q4_k_m}"]
     networks:
       - news-aggregator-network
     depends_on:
-      postgres:
+      ollama:
         condition: service_healthy
+
+  # ============================================================================
+  # Directus CMS (Database Admin Interface)
+  # ============================================================================
+#  directus:
+#    image: directus/directus:latest
+#    container_name: news-aggregator-directus
+#    restart: unless-stopped
+#    <<: *image-policy
+#    environment:
+#      DB_CLIENT: postgres
+#      DB_HOST: postgres
+#      DB_PORT: 5432
+#      DB_DATABASE: ${POSTGRES_DB:-news_aggregator}
+#      DB_USER: ${POSTGRES_USER:-newsaggregator}
+#      DB_PASSWORD: ${POSTGRES_PASSWORD:-changeme123}
+#      KEY: ${DIRECTUS_KEY:-replace-with-random-value-in-production}
+#      SECRET: ${DIRECTUS_SECRET:-replace-with-another-random-value}
+#      ADMIN_EMAIL: ${DIRECTUS_ADMIN_EMAIL:-admin@example.com}
+#      ADMIN_PASSWORD: ${DIRECTUS_ADMIN_PASSWORD:-admin}
+#      PUBLIC_URL: http://localhost:8055
+#      WEBSOCKETS_ENABLED: true
+#    ports:
+#      - "${DIRECTUS_PORT:-8055}:8055"
+#    volumes:
+#      - directus_uploads:/directus/uploads
+#      - directus_extensions:/directus/extensions
+#    networks:
+#      - news-aggregator-network
+#    depends_on:
+#      postgres:
+#        condition: service_healthy
 
   # ============================================================================
   # FastAPI Backend (Processing Service)
@@ -159,8 +221,13 @@ services:
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       PYTHONUNBUFFERED: 1
       PYTHONPATH: /app
+      LLM_PROVIDER: ${LLM_PROVIDER:-google}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b-instruct-q5_K_M}
+      VLLM_MODEL: ${VLLM_MODEL:-Qwen/Qwen2.5-7B-Instruct}
+      VLLM_BASE_URL: ${VLLM_BASE_URL:-http://vllm:8001/v1}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
       GROQ_API_KEY: ${GROQ_API_KEY}
       HUGGINGFACEHUB_API_TOKEN: ${HUGGINGFACEHUB_API_TOKEN}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
@@ -184,6 +251,8 @@ services:
         condition: service_healthy
       qdrant:
         condition: service_started
+      ollama:
+        condition: service_healthy
 
   # ============================================================================
   # Web Blog (Public Site + Admin Panel)

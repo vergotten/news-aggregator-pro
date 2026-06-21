@@ -91,6 +91,7 @@ scripts/test_openrouter.py
 *.key
 id_*
 
+ollama_models/
 # Sensitive files
 ollama_models/id_*
 scripts/test_openrouter.py
@@ -105,3 +106,5 @@ changes.diff
 git_push.shcache/
 cache/
 git_push.sh
+
+vllm_cache/

@@ -1,9 +1,12 @@
 # AI Dependencies (установить отдельно после основных)
 # pip install -r requirements-ai.txt
+#
+# Нужны для AGENT_BACKEND=langchain (LangChain-версии агентов).
+# Все провайдеры (OpenRouter, Groq, Google Gemini, Ollama) подключаются
+# через их OpenAI-совместимые endpoints — достаточно langchain-openai.
 
-langchain-core==0.1.23
-langchain-community==0.0.20
-langchain==0.1.6
+langchain-core>=0.3,<0.4
+langchain-openai>=0.2,<0.4
 
 # Уже установлено из requirements.txt:
 # ollama==0.1.6

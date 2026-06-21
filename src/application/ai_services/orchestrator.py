@@ -30,6 +30,7 @@ from src.application.ai_services.agents import (
     StyleNormalizerAgent,
     QualityValidatorAgent,
 )
+from src.application.ai_services.agent_factory import create_agent, get_agent_backend
 from src.application.ai_services.agents.telegram_formatter_agent import TelegramFormatterAgent
 from src.application.ai_services.agents.telegraph_formatter_agent import TelegraphFormatterAgent
 from src.application.ai_services.agents.image_prompt_agent import ImagePromptAgent
@@ -113,7 +114,8 @@ class AIOrchestrator:
             self.qdrant = QdrantService()
 
             logger.info(
-                f"[Orchestrator] v5.2 Initialized: provider={provider}, "
+                f"[Orchestrator] v5.3 Initialized: provider={provider}, "
+                f"agent_backend={get_agent_backend()}, "
                 f"fallback={enable_fallback}, skiplist={len(self.skiplist.list_urls())} URLs"
             )
             self._log_available_models()
@@ -126,28 +128,31 @@ class AIOrchestrator:
     # Ленивая инициализация агентов
     # =========================================================================
 
+    # Эти четыре агента имеют LangChain-версии — создаются через фабрику,
+    # backend выбирается через env AGENT_BACKEND (legacy | langchain).
+
     @property
     def classifier(self) -> ClassifierAgent:
         if self._classifier is None:
-            self._classifier = ClassifierAgent()
+            self._classifier = create_agent("classifier")
         return self._classifier
 
     @property
     def relevance(self) -> RelevanceAgent:
         if self._relevance is None:
-            self._relevance = RelevanceAgent()
+            self._relevance = create_agent("relevance")
         return self._relevance
 
     @property
     def summarizer(self) -> SummarizerAgent:
         if self._summarizer is None:
-            self._summarizer = SummarizerAgent()
+            self._summarizer = create_agent("summarizer")
         return self._summarizer
 
     @property
     def rewriter(self) -> RewriterAgent:
         if self._rewriter is None:
-            self._rewriter = RewriterAgent()
+            self._rewriter = create_agent("rewriter")
         return self._rewriter
 
     @property
@@ -586,6 +591,7 @@ class AIOrchestrator:
     def get_stats(self) -> Dict[str, Any]:
         return {
             "provider": self.provider,
+            "agent_backend": get_agent_backend(),
             "strategy": self.strategy,
             "fallback_enabled": self.enable_fallback,
             "skiplist": self.skiplist.get_stats(),

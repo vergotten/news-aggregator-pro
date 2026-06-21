@@ -41,6 +41,7 @@ class LLMProviderType(str, Enum):
     GROQ = "groq"
     GOOGLE = "google"
     OLLAMA = "ollama"
+    VLLM = "vllm"
 
 
 class TaskType(str, Enum):
@@ -73,6 +74,7 @@ class LLMConfig:
     GROQ_DEFAULT_URL = "https://api.groq.com/openai/v1"
     GOOGLE_DEFAULT_URL = "https://generativelanguage.googleapis.com/v1beta"
     OLLAMA_DEFAULT_URL = "http://ollama:11434"
+    VLLM_DEFAULT_URL = "http://localhost:8001/v1"
 
     def __post_init__(self):
         if isinstance(self.provider, str):
@@ -87,6 +89,7 @@ class LLMConfig:
             LLMProviderType.GROQ: self.GROQ_DEFAULT_URL,
             LLMProviderType.GOOGLE: self.GOOGLE_DEFAULT_URL,
             LLMProviderType.OLLAMA: self.OLLAMA_DEFAULT_URL,
+            LLMProviderType.VLLM: self.VLLM_DEFAULT_URL,
         }
         return defaults.get(self.provider, "")
 
@@ -523,6 +526,77 @@ class LLMProvider(ABC):
     ) -> str:
         pass
 
+    def generate_for_task(
+            self,
+            prompt: str,
+            task_type: "TaskType",
+            system_prompt: Optional[str] = None,
+            temperature: Optional[float] = None,
+            max_tokens: Optional[int] = None,
+    ) -> str:
+        """
+        Генерация с учётом типа задачи.
+
+        Базовая реализация игнорирует task_type и делегирует в generate().
+        Провайдеры с роутингом моделей (OpenRouter, Google) переопределяют.
+        """
+        return self.generate(
+            prompt,
+            system_prompt=system_prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+    def _chat_completions_request(
+            self,
+            api_base: str,
+            headers: Dict[str, str],
+            model: str,
+            prompt: str,
+            system_prompt: Optional[str],
+            temperature: float,
+            max_tokens: int,
+            timeout: int = 120,
+    ) -> str:
+        """
+        Общий запрос к OpenAI-совместимому endpoint /chat/completions.
+
+        Используется OpenRouter и Groq (и любым будущим OpenAI-совместимым
+        провайдером) — единая обработка ошибок и парсинг ответа.
+        """
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        try:
+            response = requests.post(
+                f"{api_base}/chat/completions",
+                headers=headers,
+                json={
+                    "model": model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                },
+                timeout=timeout,
+            )
+        except requests.exceptions.Timeout:
+            raise Exception(f"Таймаут запроса к модели {model}")
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"Сетевая ошибка при запросе к {model}: {e}")
+
+        if response.status_code != 200:
+            raise Exception(
+                f"{self.provider_name} {response.status_code}: {response.text[:200]}"
+            )
+
+        result = response.json()
+        if "error" in result:
+            raise Exception(f"Ошибка {self.provider_name}: {result['error']}")
+
+        return result["choices"][0]["message"]["content"]
+
     def generate_structured(
             self,
             prompt: str,
@@ -771,7 +845,12 @@ class OpenRouterProvider(LLMProvider):
         super().__init__(config)
 
         try:
-            self.api_base = self.base_url or LLMConfig.OPENROUTER_DEFAULT_URL
+            self.api_base = (
+                self.base_url
+                or os.getenv("OPENROUTER_BASE_URL")
+                or LLMConfig.OPENROUTER_DEFAULT_URL
+            )
+            self.api_key = self.api_key or os.getenv("OPENROUTER_API_KEY")
             self.headers = {
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
@@ -779,13 +858,27 @@ class OpenRouterProvider(LLMProvider):
                 "X-Title": "News Aggregator Pro"
             }
 
+            # OPENROUTER_MODEL закрепляет модель: она всегда пробуется первой,
+            # fallback на остальные бесплатные модели сохраняется.
+            self.pinned_model = os.getenv("OPENROUTER_MODEL") or None
+
+            # OPENROUTER_EXCLUDED_MODELS=substr1,substr2 — исключить модели,
+            # ID которых содержит любую из подстрок (слабые/сломанные модели).
+            excluded = os.getenv("OPENROUTER_EXCLUDED_MODELS", "")
+            self.excluded_models = [
+                s.strip().lower() for s in excluded.split(",") if s.strip()
+            ]
+
             self._discovery = OpenRouterModelDiscovery()
             self._tracker = ModelStatusTracker()
 
             self._fallback_count = 0
             self._current_model = self.model
 
-            logger.info(f"OpenRouter провайдер инициализирован с моделью: {self.model}")
+            logger.info(
+                f"OpenRouter провайдер инициализирован: model={self.model}"
+                + (f", pinned={self.pinned_model}" if self.pinned_model else "")
+            )
         except Exception as e:
             logger.error(f"Ошибка инициализации OpenRouter провайдера: {e}")
             raise
@@ -943,11 +1036,21 @@ class OpenRouterProvider(LLMProvider):
             else:
                 all_models = self._discovery.get_free_models()
 
-            # Фильтруем доступные (не в cooldown)
+            # Фильтруем: исключённые и в cooldown
             models = []
             for m in all_models:
+                model_lower = m.id.lower()
+                if any(excl in model_lower for excl in self.excluded_models):
+                    continue
                 if self._tracker.is_available(m.id):
                     models.append(m.id)
+
+            # Закреплённая модель (OPENROUTER_MODEL) — всегда первая
+            if self.pinned_model:
+                if self.pinned_model in models:
+                    models.remove(self.pinned_model)
+                if self._tracker.is_available(self.pinned_model):
+                    models.insert(0, self.pinned_model)
 
             # Логируем приоритет
             logger.info(f"📋 [{task_name}] Модели по приоритету ({len(models)} доступно):")
@@ -972,45 +1075,16 @@ class OpenRouterProvider(LLMProvider):
             max_tokens: int
     ) -> str:
         """Выполнить HTTP запрос к API."""
-        try:
-            messages = []
-            if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
-            messages.append({"role": "user", "content": prompt})
-
-            data = {
-                "model": model,
-                "messages": messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-            }
-
-            response = requests.post(
-                f"{self.api_base}/chat/completions",
-                headers=self.headers,
-                json=data,
-                timeout=180
-            )
-
-            if response.status_code != 200:
-                error_msg = f"OpenRouter {response.status_code}: {response.text[:200]}"
-                logger.error(error_msg)
-                raise Exception(error_msg)
-
-            result = response.json()
-            if "error" in result:
-                error_msg = f"Ошибка OpenRouter: {result['error']}"
-                logger.error(error_msg)
-                raise Exception(error_msg)
-
-            return result["choices"][0]["message"]["content"]
-
-        except requests.exceptions.Timeout:
-            raise Exception(f"Таймаут запроса к модели {model}")
-        except requests.exceptions.RequestException as e:
-            raise Exception(f"Сетевая ошибка при запросе к {model}: {e}")
-        except Exception as e:
-            raise
+        return self._chat_completions_request(
+            api_base=self.api_base,
+            headers=self.headers,
+            model=model,
+            prompt=prompt,
+            system_prompt=system_prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=180,
+        )
 
     def get_metrics(self) -> Dict[str, Any]:
         try:
@@ -1095,37 +1169,66 @@ class GroqProvider(LLMProvider):
     ) -> str:
         try:
             self._request_count += 1
-
-            messages = []
-            if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
-            messages.append({"role": "user", "content": prompt})
-
-            data = {
-                "model": self.model,
-                "messages": messages,
-                "temperature": temperature or self.config.temperature,
-                "max_tokens": max_tokens or self.config.max_tokens,
-            }
-
-            response = requests.post(
-                f"{self.api_base}/chat/completions",
+            return self._chat_completions_request(
+                api_base=self.api_base,
                 headers=self.headers,
-                json=data,
-                timeout=60
+                model=self.model,
+                prompt=prompt,
+                system_prompt=system_prompt,
+                temperature=temperature or self.config.temperature,
+                max_tokens=max_tokens or self.config.max_tokens,
+                timeout=60,
             )
-
-            if response.status_code != 200:
-                error_msg = f"Ошибка Groq: {response.status_code} {response.text}"
-                logger.error(error_msg)
-                self._error_count += 1
-                raise Exception(error_msg)
-
-            return response.json()["choices"][0]["message"]["content"]
-
         except Exception as e:
             self._error_count += 1
             logger.error(f"Ошибка генерации Groq: {e}")
+            raise
+
+
+class VLLMProvider(LLMProvider):
+    """Провайдер vLLM — локальный OpenAI-совместимый сервер."""
+
+    def __init__(self, config: Union[Dict[str, Any], LLMConfig]):
+        super().__init__(config)
+        try:
+            self.api_base = (
+                self.base_url
+                or os.getenv("VLLM_BASE_URL")
+                or LLMConfig.VLLM_DEFAULT_URL
+            )
+            self.model = self.config.model or os.getenv("VLLM_MODEL", "default")
+            self.headers = {"Content-Type": "application/json"}
+            api_key = os.getenv("VLLM_API_KEY")
+            if api_key:
+                self.headers["Authorization"] = f"Bearer {api_key}"
+            logger.info(f"vLLM провайдер инициализирован: url={self.api_base}, model={self.model}")
+        except Exception as e:
+            logger.error(f"Ошибка инициализации vLLM провайдера: {e}")
+            raise
+
+    def generate(
+            self,
+            prompt: str,
+            system_prompt: Optional[str] = None,
+            temperature: Optional[float] = None,
+            max_tokens: Optional[int] = None,
+            **kwargs
+    ) -> str:
+        try:
+            self._request_count += 1
+            return self._chat_completions_request(
+                api_base=self.api_base,
+                headers=self.headers,
+                model=self.model,
+                prompt=prompt,
+                system_prompt=system_prompt,
+                temperature=temperature or self.config.temperature,
+                max_tokens=max_tokens or self.config.max_tokens,
+                timeout=120,
+            )
+        except Exception as e:
+            self._error_count += 1
+            logger.error(f"Ошибка генерации vLLM: {e}")
             raise
 
 
@@ -1373,50 +1476,6 @@ class GoogleProvider(LLMProvider):
         finally:
             self.model = original_model
 
-    def generate_for_task(
-            self,
-            prompt: str,
-            task_type,
-            system_prompt: Optional[str] = None,
-            temperature: Optional[float] = None,
-            max_tokens: Optional[int] = None,
-    ) -> str:
-        """
-        Генерация с роутингом по TaskType.
-
-        Если в config уже выбрана нужная модель (через ModelsConfig),
-        используем её. Иначе переключаемся по TASK_MODEL_MAP.
-
-        HEAVY  → gemini-2.5-pro  (rewriter, style_normalizer)
-        MEDIUM → gemini-2.0-flash (summarizer, formatters)
-        LIGHT  → gemini-2.0-flash-lite (classifier, relevance, validator)
-        """
-        task_value = (
-            task_type.value if hasattr(task_type, "value") else str(task_type)
-        )
-
-        target_model = self.TASK_MODEL_MAP.get(task_value)
-
-        # Модель уже правильная (выбрана в ModelsConfig) — просто генерируем
-        if not target_model or self.model == target_model:
-            return self.generate(
-                prompt, system_prompt, temperature, max_tokens
-            )
-
-        # Временно переключаем модель
-        original_model = self.model
-        self.model = target_model
-        logger.debug(
-            f"[Google] generate_for_task: "
-            f"{task_value} → {target_model} (было: {original_model})"
-        )
-        try:
-            return self.generate(
-                prompt, system_prompt, temperature, max_tokens
-            )
-        finally:
-            self.model = original_model
-
 
 class OllamaProvider(LLMProvider):
     """Провайдер Ollama для локальных моделей."""
@@ -1441,6 +1500,7 @@ class OllamaProvider(LLMProvider):
         size_vram == 0          → модель целиком в CPU/RAM
         size_vram == size       → 100% на GPU
         """
+        sep = "=" * 60
         try:
             resp = requests.get(f"{self.api_base}/api/ps", timeout=10)
             if resp.status_code != 200:
@@ -1449,8 +1509,10 @@ class OllamaProvider(LLMProvider):
             models = resp.json().get("models", [])
             if not models:
                 logger.info(
-                    "[Ollama] Backend: модель ещё не загружена в память "
-                    "(узнаем при первом запросе — смотри лог после первого generate)"
+                    f"\n{sep}\n"
+                    f"  [Ollama] BACKEND: модель ещё не загружена\n"
+                    f"  Статус покажется после первого запроса к LLM\n"
+                    f"{sep}"
                 )
                 return
             for m in models:
@@ -1458,15 +1520,21 @@ class OllamaProvider(LLMProvider):
                 size = m.get("size", 0)
                 size_vram = m.get("size_vram", 0)
                 if size_vram <= 0:
-                    backend = "CPU (0% в VRAM — медленно!)"
+                    label = ">>> CPU (VRAM = 0) <<< МЕДЛЕННО — модель в RAM, не в GPU!"
+                    log_fn = logger.warning
                 elif size_vram >= size:
-                    backend = "GPU (100% в VRAM — быстро)"
+                    label = ">>> GPU (100% в VRAM) <<< БЫСТРО"
+                    log_fn = logger.info
                 else:
                     pct = round(size_vram / size * 100) if size else 0
-                    backend = f"ГИБРИД (~{pct}% в VRAM, остальное CPU)"
-                logger.info(
-                    f"[Ollama] Backend для '{name}': {backend} "
-                    f"(size={size / 1e9:.2f}GB, size_vram={size_vram / 1e9:.2f}GB)"
+                    label = f">>> ГИБРИД (~{pct}% в VRAM, остальное в RAM) <<<"
+                    log_fn = logger.warning
+                log_fn(
+                    f"\n{sep}\n"
+                    f"  [Ollama] BACKEND: {label}\n"
+                    f"  Модель : {name}\n"
+                    f"  Размер : {size / 1e9:.2f} GB total  |  {size_vram / 1e9:.2f} GB в VRAM\n"
+                    f"{sep}"
                 )
         except Exception as e:
             logger.debug(f"[Ollama] Не удалось проверить GPU/CPU backend: {e}")
@@ -1532,6 +1600,7 @@ class LLMProviderFactory:
         "openrouter": OpenRouterProvider,
         "google": GoogleProvider,
         "ollama": OllamaProvider,
+        "vllm": VLLMProvider,
     }
 
     @classmethod

@@ -14,7 +14,7 @@
 import logging
 import re
 from typing import Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from src.application.ai_services.agents.base_agent import BaseAgent, TaskType
 from src.infrastructure.ai.llm_provider import LLMProvider
@@ -29,6 +29,14 @@ class SummaryResult(BaseModel):
     teaser: str = Field(description="Тизер 2-4 предложения")
     key_points: list[str] = Field(default_factory=list)
     main_topic: str = Field(default="")
+
+    @model_validator(mode='before')
+    @classmethod
+    def normalize_teaser_field(cls, data):
+        """Qwen пишет 'teizer' вместо 'teaser' — нормализуем."""
+        if isinstance(data, dict) and 'teaser' not in data and 'teizer' in data:
+            data['teaser'] = data.pop('teizer')
+        return data
 
     @field_validator('teaser')
     @classmethod

@@ -41,6 +41,13 @@ try:
 except ImportError:
     HAS_TQDM = False
 
+# Загружаем .env до любых os.getenv() вызовов (LLM_PROVIDER, GEMINI_API_KEY и др.)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(override=False)
+except ImportError:
+    pass
+
 # =========================================================================
 # Эти импорты НЕ тянут asyncpg — они нужны в обоих режимах
 # =========================================================================
@@ -484,7 +491,7 @@ class PipelineConfig:
         self.rate_limit = rate_limit
         self.health_check_interval = health_check_interval
 
-        if self.provider and self.provider not in ['groq', 'openrouter', 'google', 'ollama']:
+        if self.provider and self.provider not in ['groq', 'openrouter', 'google', 'ollama', 'vllm']:
             raise ValueError(f"Неподдерживаемый провайдер: {self.provider}")
         if self.strategy and self.strategy not in ['cost_optimized', 'balanced', 'quality_focused', 'speed_focused']:
             raise ValueError(f"Неподдерживаемая стратегия: {self.strategy}")
@@ -1146,6 +1153,9 @@ async def _check_llm_provider(config: PipelineConfig, metrics: PipelineMetrics) 
     if name in api_keys:
         env_var, _ = api_keys[name]
         key = os.getenv(env_var)
+        # Google: GEMINI_API_KEY тоже подходит
+        if not key and name == "google":
+            key = os.getenv("GEMINI_API_KEY")
         if not key or "YOUR-KEY-HERE" in key or len(key) < 10:
             logger.error(f"[{metrics.correlation_id}] {env_var} не установлен или невалиден!")
             return False
@@ -1155,7 +1165,8 @@ async def _check_llm_provider(config: PipelineConfig, metrics: PipelineMetrics) 
         try:
             import requests
             cfg = get_models_config(provider="ollama")
-            resp = requests.get(f"{cfg.get_ollama_base_url()}/api/tags", timeout=10)
+            base_url = cfg.get_ollama_base_url()
+            resp = requests.get(f"{base_url}/api/tags", timeout=10)
             if resp.status_code != 200:
                 logger.error(f"Ollama недоступен: {resp.status_code}")
                 return False
@@ -1165,6 +1176,43 @@ async def _check_llm_provider(config: PipelineConfig, metrics: PipelineMetrics) 
                 logger.error(f"Модель {model_name} не найдена в Ollama")
                 return False
             logger.info(f"✓ Ollama: {model_name}")
+
+            # Проверяем GPU/CPU backend сразу при старте конвейера
+            sep = "=" * 60
+            try:
+                ps = requests.get(f"{base_url}/api/ps", timeout=10)
+                ps_models = ps.json().get("models", []) if ps.status_code == 200 else []
+                if not ps_models:
+                    logger.info(
+                        f"\n{sep}\n"
+                        f"  [Ollama] BACKEND: модель не загружена в память\n"
+                        f"  Загрузится при первом запросе — GPU/CPU статус появится тогда\n"
+                        f"{sep}"
+                    )
+                else:
+                    for m in ps_models:
+                        size = m.get("size", 0)
+                        size_vram = m.get("size_vram", 0)
+                        if size_vram <= 0:
+                            label = ">>> CPU (VRAM = 0) <<< МЕДЛЕННО — модель в RAM, не в GPU!"
+                            log_fn = logger.warning
+                        elif size_vram >= size:
+                            label = ">>> GPU (100% в VRAM) <<< БЫСТРО"
+                            log_fn = logger.info
+                        else:
+                            pct = round(size_vram / size * 100) if size else 0
+                            label = f">>> ГИБРИД (~{pct}% в VRAM, остальное в RAM) <<<"
+                            log_fn = logger.warning
+                        log_fn(
+                            f"\n{sep}\n"
+                            f"  [Ollama] BACKEND: {label}\n"
+                            f"  Модель : {m.get('name') or m.get('model')}\n"
+                            f"  Размер : {size / 1e9:.2f} GB total  |  {size_vram / 1e9:.2f} GB в VRAM\n"
+                            f"{sep}"
+                        )
+            except Exception:
+                pass  # backend check non-critical
+
             return True
         except Exception as e:
             logger.error(f"Ollama: {e}")

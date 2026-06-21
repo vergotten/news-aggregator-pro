@@ -199,21 +199,13 @@ class BaseAgent(ABC):
 
         for attempt in range(self.max_retries + 1):
             try:
-                if hasattr(self._llm, 'generate_for_task'):
-                    result = self._llm.generate_for_task(
-                        prompt=prompt,
-                        task_type=self.task_type,
-                        system_prompt=system_prompt,
-                        temperature=temperature,
-                        max_tokens=max_tokens
-                    )
-                else:
-                    result = self._llm.generate(
-                        prompt=prompt,
-                        system_prompt=system_prompt,
-                        temperature=temperature,
-                        max_tokens=max_tokens
-                    )
+                result = self._llm.generate_for_task(
+                    prompt=prompt,
+                    task_type=self.task_type,
+                    system_prompt=system_prompt,
+                    temperature=temperature,
+                    max_tokens=max_tokens
+                )
 
                 # Проверка пустого ответа
                 if not result or len(result.strip()) < min_len:

@@ -578,7 +578,7 @@ class OpenRouterAutoDiscovery:
 class ModelsConfig:
     """Улучшенная конфигурация моделей v6.0."""
 
-    SUPPORTED_PROVIDERS = ["openrouter", "groq", "google", "ollama"]
+    SUPPORTED_PROVIDERS = ["openrouter", "groq", "google", "ollama", "vllm"]
 
     def __init__(
             self,
@@ -1107,6 +1107,40 @@ class ModelsConfig:
             return config
 
         # =====================================================================
+        # vLLM (локальный OpenAI-совместимый сервер)
+        # =====================================================================
+        elif provider_name == "vllm":
+            vllm_cfg = self._config.get("vllm", {})
+            model = (
+                os.getenv("VLLM_MODEL")
+                or vllm_cfg.get("model", "default")
+            )
+            base_url = (
+                os.getenv("VLLM_BASE_URL")
+                or vllm_cfg.get("base_url", LLMConfig.VLLM_DEFAULT_URL)
+            )
+            yaml_temps = self._config.get("temperatures", {})
+            temperature = yaml_temps.get(agent_name, 0.5)
+            agent_max_tokens = {
+                "classifier": 1000, "relevance": 1000, "quality_validator": 1000,
+                "summarizer": 2000, "rewriter": 4096, "style_normalizer": 8192,
+                "telegram_formatter": 4000, "telegraph_formatter": 4096, "seo_optimizer": 2000,
+            }
+            max_tokens = agent_max_tokens.get(agent_name, 4096)
+            config = LLMConfig(
+                provider=LLMProviderType.VLLM,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                api_key=os.getenv("VLLM_API_KEY"),
+                base_url=base_url,
+                context_length=vllm_cfg.get("context_length", 32768),
+            )
+            logger.info(f"[ModelsConfig] vLLM: agent={agent_name}, model={model}, url={base_url}")
+            self._cache.set(cache_key, asdict(config))
+            return config
+
+        # =====================================================================
         # Groq и другие провайдеры (через _select_model)
         # =====================================================================
         model_info = self._select_model(agent_type, provider_name)
@@ -1146,10 +1180,6 @@ class ModelsConfig:
 
         self._cache.set(cache_key, asdict(config))
         return config
-
-    # -------------------------------------------------------------------------
-    # Также замени _load_api_keys() — исправляет GEMINI_API_KEY
-    # -------------------------------------------------------------------------
 
     def _load_api_keys(self) -> Dict[str, Optional[str]]:
         """Загрузить API ключи. GEMINI_API_KEY имеет приоритет над GOOGLE_API_KEY."""
@@ -1420,14 +1450,6 @@ class ModelsConfig:
             description="Default fallback",
             providers=[("openrouter", 1.0)]
         )
-
-    def _load_api_keys(self) -> Dict[str, Optional[str]]:
-        """Загрузить API ключи."""
-        return {
-            "openrouter": os.getenv("OPENROUTER_API_KEY"),
-            "groq": os.getenv("GROQ_API_KEY"),
-            "google": os.getenv("GOOGLE_API_KEY"),
-        }
 
 
 # =============================================================================

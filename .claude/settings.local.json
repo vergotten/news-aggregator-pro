@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git config *)",
+      "Bash(xargs wc -l)",
+      "Read(//f/Code/**)",
+      "Bash(ls -la news_aggregator_pro_refactored)",
+      "Bash(robocopy \"news-aggregator-pro\" \"news_aggregator_pro_refactored\" /E /XD .git .pytest_cache __pycache__ cache logs .idea node_modules venv .venv /XF \"*.pyc\" /NFL /NDL /NJH /NJS /MT:8)",
+      "Bash(echo \"robocopy exit=$?\")"
+    ]
+  }
+}
